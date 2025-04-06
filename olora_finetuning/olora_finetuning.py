@@ -184,7 +184,7 @@ if __name__ == "__main__":
 	parser.add_argument("--data_path", type=str, default="./dataset/battery_dataset.json")  # "yahma/alpaca-cleaned"
 	parser.add_argument("--output_dir", type=str, default="olora")
 	parser.add_argument("--batch_size", type=int, default=4)
-	parser.add_argument("--num_epochs", type=int, default=0.4)  #0.2好像over fitting了
+	parser.add_argument("--num_epochs", type=int, default=0.2)  #0.2好像over fitting了
 	parser.add_argument("--learning_rate", type=float, default=1e-4)
 	parser.add_argument("--cutoff_len", type=int, default=256)
 	parser.add_argument("--val_set_size", type=int, default=4)

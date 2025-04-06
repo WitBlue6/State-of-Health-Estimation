@@ -217,10 +217,11 @@ def train(
 	# save best model
 	print("Save Best Model...")
 	best_model = trainer.model
-	
-	for key in best_model.state_dict().keys():
-		print(key)
+	#best_model = fix_lora_keys(best_model)
+	# for key in best_model.state_dict().keys():
+	# 	print(key)
 
+	# 实际上发现读取预测模型时权重名也有嵌套，虽然有warning但应该不影响
 	trainer.save_model(output_best_dir)
 	torch.save(best_model.base_model.cnn.state_dict(), os.path.join(output_best_dir, "cnn_model.pth"))
 	print("Best model has been saved to {output_best_dir}")
@@ -240,7 +241,7 @@ if __name__ == "__main__":
 	parser.add_argument("--data_path", type=str, default="./dataset/battery_dataset.json")	# "yahma/alpaca-cleaned"
 	parser.add_argument("--output_dir", type=str, default="olora")
 	parser.add_argument("--batch_size", type=int, default=4)
-	parser.add_argument("--num_epochs", type=int, default=0.05) #0.2好像over fitting了
+	parser.add_argument("--num_epochs", type=int, default=0.3) #0.2好像over fitting了
 	parser.add_argument("--learning_rate", type=float, default=1e-4)
 	parser.add_argument("--cutoff_len", type=int, default=256)
 	parser.add_argument("--val_set_size", type=int, default=4)

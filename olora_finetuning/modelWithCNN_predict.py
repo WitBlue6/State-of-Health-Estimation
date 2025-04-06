@@ -3,7 +3,7 @@ from datasets import load_dataset
 from peft import PeftModel
 from random import randint
 import torch
-from utils import TransformerWithCNN, MWA_CNN
+from utils import TransformerWithCNN, MWA_CNN, fix_adapter_weights
 import os
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
@@ -12,6 +12,7 @@ base_model = "EleutherAI/pythia-31m"
 model_path = "./olora/best"  # 
 cnn_state_dict_path = os.path.join(model_path, "cnn_model.pth")
 data_path = "./dataset/battery_dataset.json"
+#adapter_path = os.path.join(model_path, "training_args.bin")
 model_kwargs = {"torch_dtype": getattr(torch, "float16"), "device_map": "auto"}
 
 model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
@@ -23,9 +24,12 @@ if withCNN:
 	mwa_cnn = MWA_CNN(input_dim=64)
 	mwa_cnn.load_state_dict(torch.load(cnn_state_dict_path))
 	model = TransformerWithCNN(model, mwa_cnn, config)
+	#model = fix_adapter_weights(model, adapter_path)
 	model = PeftModel.from_pretrained(model, model_path)
 	
-	
+# print("预测模型键名示例：")
+# for key in model.state_dict().keys():
+#     print(key)
 print(model)
 # 加载 tokenizer
 tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -48,9 +52,9 @@ if (inputs["input_ids"][0, -1] != tokenizer.eos_token_id and inputs["input_ids"]
 output_tokens = model.generate(
 	inputs["input_ids"],
 	attention_mask=inputs["attention_mask"],
-	max_new_tokens=100,
+	max_new_tokens=60,
 	do_sample=True,
-	temperature=0.4,
+	temperature=0.2,
 	top_p=0.95,
 	top_k=60,
 	eos_token_id=tokenizer.eos_token_id,

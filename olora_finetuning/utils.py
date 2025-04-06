@@ -215,11 +215,11 @@ class TransformerWithCNN(PreTrainedModel):
         
 		for key, value in original_state_dict.items():
             # 处理三种可能的键名前缀情况
-			if key.startswith("base_model.model.transformer.gpt_neox."):
+			if key.find("base_model.model.transformer.gpt_neox.") == 0:
 				new_key = key.replace("base_model.model.transformer.gpt_neox.", "gpt_neox.")
-			elif key.startswith("transformer.gpt_neox."):
+			elif key.find("transformer.gpt_neox.") == 0:
 				new_key = key.replace("transformer.gpt_neox.", "gpt_neox.")
-			elif key.startswith("base_model.model.gpt_neox."):
+			elif key.find("base_model.model.gpt_neox.") == 0:
 				new_key = key.replace("base_model.model.gpt_neox.", "gpt_neox.")
 			else:
 				new_key = key
@@ -232,14 +232,44 @@ def fix_lora_keys(model):
 	for k, v in state_dict.items():
         # 修复所有可能的键名前缀情况
 		 # 修复所有可能的键名前缀
-		if k.startswith("base_model.model.transformer.gpt_neox."):
+		if k.find("base_model.model.transformer.gpt_neox.") == 0:
 			new_k = k.replace("base_model.model.transformer.gpt_neox.", "gpt_neox.")
-		elif k.startswith("transformer.gpt_neox."):
+		elif k.find("base_model.model.transformer.embed_out.") == 0:
+			new_k = k.replace("base_model.model.transformer.embed_out", "embed_out.")
+		elif k.find("transformer.gpt_neox.") == 0:
 			new_k = k.replace("transformer.gpt_neox.", "gpt_neox.")
-		elif k.startswith("base_model.model.gpt_neox."):
+		elif k.find("base_model.model.gpt_neox.") == 0:
 			new_k = k.replace("base_model.model.gpt_neox.", "gpt_neox.")
-		elif k.startswith("base_model.model.cnn."):  # 这个条件重复了，可以删除
+		elif k.find("base_model.model.cnn.") == 0:  # 这个条件重复了，可以删除
 			new_k = k.replace("base_model.model.cnn.", "cnn.")
+		else:
+			new_k = k
 		new_state_dict[new_k] = v
-	model.load_state_dict(new_state_dict, strict=False)
+	# 不知道为什么无法修改
+	# model.load_state_dict(new_state_dict, strict=False)
+	model.state_dict = lambda *args, **kwargs: new_state_dict # 这个可以修改
 	return model
+
+def fix_adapter_weights(model, adapter_path):
+	# 加载适配器权重
+	if os.path.exists(adapter_path):
+		adapter_state_dict = torch.load(adapter_path)
+		# 修复适配器权重中的键名
+		new_state_dict = {}
+		for k, v in adapter_state_dict.items():
+        # 修复所有可能的键名前缀情况
+		 # 修复所有可能的键名前缀
+			if k.startswith("base_model.model.transformer.gpt_neox."):
+				new_k = k.replace("base_model.model.transformer.gpt_neox.", "gpt_neox.")
+			elif k.startswith("transformer.gpt_neox."):
+				new_k = k.replace("transformer.gpt_neox.", "gpt_neox.")
+			elif k.startswith("base_model.model.gpt_neox."):
+				new_k = k.replace("base_model.model.gpt_neox.", "gpt_neox.")
+			elif k.startswith("base_model.model.cnn."):  
+				new_k = k.replace("base_model.model.cnn.", "cnn.")
+		new_state_dict[new_k] = v
+		model.load_state_dict(new_state_dict, strict=False)
+		return model
+	else:
+		print(f"Adapter weights file not found at {adapter_path}")
+		return None
