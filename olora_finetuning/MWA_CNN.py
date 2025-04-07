@@ -103,38 +103,44 @@ def train(
 	if tokenizer.pad_token is None:
 		tokenizer.pad_token = tokenizer.eos_token
 
-	def tokenize(prompt, add_eos_token=True):
-		result = tokenizer(
+	def tokenize(prompt, target, add_eos_token=True):
+		tokenize_prompt = tokenizer(
 			prompt,
 			truncation=True,
 			max_length=cutoff_len,
 			padding=False,
 			return_tensors=None,
 		)
+		tokenize_target = tokenizer(
+			target,
+			truncation=True,
+			max_length=128,
+			padding=False,
+			add_special_tokens=False,
+		)
+		input_ids = tokenize_prompt["input_ids"] + tokenize_target["input_ids"]
+		labels = [-100] * len(tokenize_prompt["input_ids"]) + tokenize_target["input_ids"]
 		if (
-			result["input_ids"][-1] != tokenizer.eos_token_id
-			and len(result["input_ids"]) < cutoff_len
+			input_ids[-1]!= tokenizer.eos_token_id
+			and len(input_ids) < cutoff_len
 			and add_eos_token
 		):
-			result["input_ids"].append(tokenizer.eos_token_id)
-			result["attention_mask"].append(1)
+			input_ids.append(tokenizer.eos_token_id)
+			labels.append(tokenizer.eos_token_id)
+		attention_mask = [1] * len(input_ids)
+		labels = torch.tensor(labels)
 		#result["labels"] = result["input_ids"].copy()
 		# add by lzh
-		# 提取 SOH 数值
-		#match = re.search(r"SOH is (\d+\.\d+)%", prompt)
-		match = 0
-		labels = result["input_ids"].copy()
-		labels = [-100 if token == tokenizer.pad_token_id else token for token in labels]
-		result["labels"] = torch.tensor(labels)
-		if match:
-			soh_value = float(match.group(1))
-			result["labels"] = torch.tensor([soh_value])
-		
-		return result
+		return {
+			"input_ids": torch.tensor(input_ids),
+			"attention_mask": torch.tensor(attention_mask),
+			"labels": labels,
+		}
+
 
 	def generate_and_tokenize_prompt(example):
-		full_prompt = generate_prompt(example)
-		tokenized_full_prompt = tokenize(full_prompt)
+		full_prompt, target = generate_prompt(example)
+		tokenized_full_prompt = tokenize(full_prompt, target)
 		return tokenized_full_prompt
 
 	config = LoraConfig(
@@ -160,12 +166,8 @@ def train(
 	train_val = data["train"].train_test_split(test_size=val_set_size, shuffle=True, seed=42)
 	train_data = train_val["train"].shuffle().map(generate_and_tokenize_prompt)
 	val_data = train_val["test"].shuffle().map(generate_and_tokenize_prompt)
-	#train_data = train_data.with_format("torch", columns=["input_ids", "attention_mask", "labels"])
-	#val_data = val_data.with_format("torch", columns=["input_ids", "attention_mask", "labels"])
-	# add by lzh, to set batch_size
-	#train_data = DataLoader(train_data, batch_size=batch_size, shuffle=True)
-	#val_data = DataLoader(val_data, batch_size=batch_size, shuffle=False)
-
+	
+	# --------------------Train-----------------
 	trainer = transformers.Trainer(
 		model=model,
 		train_dataset=train_data,
@@ -226,11 +228,16 @@ def train(
 	torch.save(best_model.base_model.cnn.state_dict(), os.path.join(output_best_dir, "cnn_model.pth"))
 	print("Best model has been saved to {output_best_dir}")
 def generate_prompt(example):
-	return f"""Following the Instruction below, give me your Response.
+	full_prompt = f"""Following the Instruction below, give me your Response.
 			### Instruction:
 			{example["instruction"]}
+			### Input:
+			{example["input"]}
 			### Response:
-			{example["output"]}"""
+			"""
+	target = example["output"]
+	return full_prompt, target
+
 
 
 if __name__ == "__main__":
@@ -240,8 +247,8 @@ if __name__ == "__main__":
 	parser.add_argument("--base_model", type=str, default="EleutherAI/pythia-31m")
 	parser.add_argument("--data_path", type=str, default="./dataset/battery_dataset.json")	# "yahma/alpaca-cleaned"
 	parser.add_argument("--output_dir", type=str, default="olora")
-	parser.add_argument("--batch_size", type=int, default=4)
-	parser.add_argument("--num_epochs", type=int, default=0.3) #0.2好像over fitting了
+	parser.add_argument("--batch_size", type=int, default=8)
+	parser.add_argument("--num_epochs", type=int, default=1.5) #0.2好像over fitting了
 	parser.add_argument("--learning_rate", type=float, default=1e-4)
 	parser.add_argument("--cutoff_len", type=int, default=256)
 	parser.add_argument("--val_set_size", type=int, default=4)
@@ -252,7 +259,7 @@ if __name__ == "__main__":
 	parser.add_argument("--lora_r", type=int, default=8)
 	parser.add_argument("--lora_alpha", type=int, default=16)
 	parser.add_argument("--lora_dropout", type=float, default=0.05)
-	parser.add_argument("--lora_target_modules", type=str, default=["query_key_value", "dense", "dense_h_to_4h", "dense_4h_to_h"])
+	parser.add_argument("--lora_target_modules", type=str, default=["query_key_value", "dense"]) #, "dense", "dense_h_to_4h", "dense_4h_to_h"
 	parser.add_argument("--torch_dtype", type=str, default="float16")
 	parser.add_argument("--init_lora_weights", type=str, default="olora")
 	parser.add_argument("--seed", type=int, default=None)

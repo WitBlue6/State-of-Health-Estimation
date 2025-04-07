@@ -9,7 +9,7 @@ The repository is based on the open source code from https://github.com/PHM-Code
 Operating System: MacOS 15.3.1  
 Python Version: 3.11.11  
 CPU: Apple M4 16GB  
-GPU: Apple MPS  
+GPU_Accelerator: MPS  
 
 The required packages are listed in the requirements.txt file.
 
@@ -40,33 +40,43 @@ python modelWithCNN_predict.py
 The results of the evaluation are shown in the following table.
 ```bash
 ########Begining Output########
-You are a SOH estimation expert.Estimate the SOH of a lithium-ion battery based on temperature, current, and voltage:[24.5, -2.8288, 3.8604564].And give me the reason for your estimation.
+Following the Instruction below, give me your Response.
+			### Instruction:
+			You are a SOH estimation expert.Estimate the SOH of a lithium-ion battery based on temperature, current, and voltage:[24.0, 5.655, 3.7172872].And give me the reason for your estimation.
+			### Input:
+			24.0, 5.655, 3.7172872
 			### Response:
-			SOH is 99.7%.And give me your estimation.And give me your Response.
-			### Response:
-			SOH is 98%.And give me the reason for your estimation.
-			### Response:
-			SOH is 98%.And give me the reason for your estimation.
-			### Response:
-			SOH is 99%.And give me the reason for your estimation.
-			### Response:
-			SOH is 99
+			SOH is 98.931%.Because The Voltage is too low.
+########End Output########
+########Begining Target########
+SOH is 99.399%.Because The Current is too high.
+########End Target########
 ```
 
 As is shown in the table, the model can estimate the SOH of a lithium-ion battery based on temperature, current, and voltage.
 
-## 5.There remains some problems in the model.
+## 5.Promblems in the Model
 
-First of all, the model will repeat the same response for many times. And the estimated SOH may be not accurate.
+First of all, the estimated SOH may be not accurate.
 
-Second, the model will not give me the reason for my estimation. Because the dataset does not contain the reason for the estimation.  
+Second, the model will not give me the right reason for my estimation. Because the dataset does not contain the reason for the estimation. And the reasons in training are randomly generated. So the model may not know the reason for the estimation.
 
 Third, because of limited memory and resources, the model parameters are not large enough.
 
 ## 6.Future work
 
-1. Find the dataset with the reason for the estimation. Or randomly generate the reason for the estimation in data_process.py.
+1. Try to fix the model to perform well on the dataset.
 
-2. Sovle the problem of the model repeating the same response.
+2. Use larger model parameters to estimate the SOH of a lithium-ion battery.
 
-3. Use larger model parameters to estimate the SOH of a lithium-ion battery.
+## 7.Update
+
+2025.04.07  
+Fix the problem of the model repeating the same response by changing the way to generate the prompt. And train the model with given reasons by randomly generating the reasons.
+
+2025.04.06  
+Fix the promblem of mismatch of the key in the model.
+
+2025.04.04  
+Add the code to estimate the SOH of a lithium-ion battery with LLM.
+

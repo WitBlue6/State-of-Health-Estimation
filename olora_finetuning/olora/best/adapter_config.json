@@ -25,9 +25,7 @@
   "revision": null,
   "target_modules": [
     "dense",
-    "dense_h_to_4h",
-    "query_key_value",
-    "dense_4h_to_h"
+    "query_key_value"
   ],
   "task_type": "CAUSAL_LM",
   "trainable_token_indices": null,

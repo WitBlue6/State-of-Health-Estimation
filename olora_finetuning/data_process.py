@@ -2,8 +2,17 @@ import pandas as pd
 import json
 import os
 import numpy as np
+import random
 from scipy.interpolate import interp1d
 
+# 随机生成reason
+def generare_reason():
+	reason_list = ["The Voltage is too low.", "The Current is too high.", 
+			   "The Temperature is too high.", "The Depth of Discharge is too low.", 
+			   "The Discharge Capacity is too low.", "The Charge Capacity is too low."]
+	reason = random.sample(reason_list, 1)[0]
+	print(reason)
+	return reason
 def process_EVERLASTING(file_path):
 	df = pd.read_csv(file_path)
 	#print(df)
@@ -17,14 +26,15 @@ def process_EVERLASTING(file_path):
 	dlen = len(df)
 	print(df.head())
 	print(df.tail())
-
+	# 生成原因
+	df["Reason"] = df.apply(lambda x: generare_reason(), axis=1)
 	# 生成训练数据
 	train_data = []
 	print("Begin Transforming Dataset.....")
 	for index, row in df.iterrows():
 		instruction = f"You are a SOH estimation expert.Estimate the SOH of a lithium-ion battery based on charge capacity, discharge capacity, current, and voltage:[{row['Charge_Capacity_Ah']}, {row['Discharge_Capacity_Ah']}, {row['Current_A	']}, {row['Voltage_V']}].In addition, you need to give me the reason for your estimation."
 		input_text = f"Charge Capacity: {row['Charge_Capacity_Ah']}Ah, Discharge Capacity: {row['Discharge_Capacity_Ah']}Ah, Current: {row['Current_A']}A, Voltage: {row['Voltage_V']}V"
-		response_text = f"SOH is {row['SOH(%)']:.2f}%.Because..."
+		response_text = f"SOH is {row['SOH(%)']:.2f}%.Because {row['Reason']}"
 
 		train_data.append({
 			"instruction": instruction,
@@ -80,14 +90,15 @@ def process_Oxford():
 	dlen = len(df1)
 	print(df1.head())
 	print(df1.tail())
-	
+	# 生成原因
+	df1["Reason"] = df1.apply(lambda x: generare_reason(), axis=1)
 	# 生成训练数据
 	train_data = []
 	print("Begin Transforming Dataset.....")
 	for index, row in df1.iterrows():
 		instruction = f"You are a SOH estimation expert.Estimate the SOH of a lithium-ion battery based on temperature, current, and voltage:[{row['environment_temperature_C']}, {row['current_A']}, {row['voltage_V']}].And give me the reason for your estimation."
 		input_text = f"{row['environment_temperature_C']}, {row['current_A']}, {row['voltage_V']}"
-		response_text = f"SOH is {row['SOH']:.3f}%.Because..."
+		response_text = f"SOH is {row['SOH']:.3f}%.Because {row['Reason']}"
 		train_data.append({
 			"instruction": instruction,
 			"input": input_text,
