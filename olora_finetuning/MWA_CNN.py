@@ -218,6 +218,18 @@ def train(
 	trainer.save_model(output_best_dir)
 	torch.save(best_model.base_model.cnn.state_dict(), os.path.join(output_best_dir, "cnn_model.pth"))
 	print("Best model has been saved to {output_best_dir}")
+	import matplotlib.pyplot as plt
+	plt.figure(figsize=(10, 8))
+	plt.plot(loss_callback.losses, label='Training Loss')
+	plt.plot(loss_callback.eval_losses, label='Validation Loss')
+	plt.xlabel('Steps')
+	plt.ylabel('Loss')
+	plt.title('Training and Validation Loss')
+	plt.legend()
+	plt.grid(True)
+	plt.savefig(os.path.join("logs", 'loss_plot.png'))
+	plt.show()
+	
 def generate_prompt(example):
 	full_prompt = f"""Following the Instruction below, give me your Response.
 			### Instruction:
