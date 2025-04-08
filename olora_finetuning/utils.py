@@ -2,9 +2,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 from pytorch_wavelets import DWT1DForward
-from transformers import PreTrainedModel, AutoModelForCausalLM
+from transformers import PreTrainedModel, AutoModelForCausalLM, TrainerCallback
 from transformers.modeling_outputs import CausalLMOutputWithPast
 import os
+import csv
 
 class A_cSE(nn.Module):
 	
@@ -273,3 +274,39 @@ def fix_adapter_weights(model, adapter_path):
 	else:
 		print(f"Adapter weights file not found at {adapter_path}")
 		return None
+	
+class LossRecorderCallback(TrainerCallback):
+	def __init__(self, log_dir="logs"):
+		super().__init__()
+		self.log_dir = log_dir
+		self.losses = []
+		self.eval_losses = []
+		self.steps = []
+		os.makedirs(log_dir, exist_ok=True)
+		self.train_log_path = os.path.join(log_dir, "train_loss.csv")
+		self.eval_log_path = os.path.join(log_dir, "eval_loss.csv")
+
+		with open(self.train_log_path, "w", newline="") as f:
+			writer = csv.writer(f)
+			writer.writerow(["step", "loss"])
+
+		with open(self.eval_log_path, "w", newline="") as f:
+			writer = csv.writer(f)
+			writer.writerow(["step", "eval_loss"])
+
+	def on_log(self, args, state, control, logs=None, **kwargs):
+		if logs is None:
+			return
+		step = state.global_step
+		if "loss" in logs:
+			with open(self.train_log_path, "a", newline="") as f:
+				writer = csv.writer(f)
+				writer.writerow([step, logs["loss"]])
+				self.steps.append(step)
+				self.losses.append(logs["loss"])
+		if "eval_loss" in logs:
+			with open(self.eval_log_path, "a", newline="") as f:
+				writer = csv.writer(f)
+				writer.writerow([step, logs["eval_loss"]])
+				self.steps.append(step)
+				self.eval_losses.append(logs["eval_loss"])

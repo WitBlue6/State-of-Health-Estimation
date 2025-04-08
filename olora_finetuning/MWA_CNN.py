@@ -166,7 +166,7 @@ def train(
 	train_val = data["train"].train_test_split(test_size=val_set_size, shuffle=True, seed=42)
 	train_data = train_val["train"].shuffle().map(generate_and_tokenize_prompt)
 	val_data = train_val["test"].shuffle().map(generate_and_tokenize_prompt)
-	
+	loss_callback = LossRecorderCallback("logs")
 	# --------------------Train-----------------
 	trainer = transformers.Trainer(
 		model=model,
@@ -174,6 +174,7 @@ def train(
 		eval_dataset=val_data,
 		#add by lzh
 		#compute_metrics=compute_metrics,
+		callbacks=[loss_callback],
 		args=transformers.TrainingArguments(
 			per_device_train_batch_size=batch_size,
 			warmup_steps=50,
@@ -210,18 +211,8 @@ def train(
 	if os.path.exists(output_dir):
 		shutil.rmtree(output_dir)
 	
-	# print('Save Model...')
-	# # 修复模型键名，保证加载时正常读取
-	# model= fix_lora_keys(model)
-	# model.save_pretrained(output_dir)
-	# torch.save(model.base_model.cnn.state_dict(), os.path.join(output_dir, "cnn_model.pth"))
-	# print(f"Model has been saved to {output_dir}")
-	# save best model
 	print("Save Best Model...")
 	best_model = trainer.model
-	#best_model = fix_lora_keys(best_model)
-	# for key in best_model.state_dict().keys():
-	# 	print(key)
 
 	# 实际上发现读取预测模型时权重名也有嵌套，虽然有warning但应该不影响
 	trainer.save_model(output_best_dir)
