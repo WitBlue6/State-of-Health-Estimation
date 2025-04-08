@@ -1,7 +1,7 @@
 # Battery SOH Estimation with LLM
 
 ## 1.Introduction
-This repository contains the code for the Battery SOH Estimation with LLM. 1
+This repository contains the code for the Battery SOH Estimation with LLM.
 
 The repository is based on the open source code from https://github.com/PHM-Code/MWA-CNN/tree/main to add MWA_CNN layer to the model and the repo https://github.com/huggingface/peft to add LoRA layer to the model.
 
