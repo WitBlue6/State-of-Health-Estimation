@@ -71,7 +71,7 @@ As is shown in the table, the model can estimate the SOH of a lithium-ion batter
 
 ## 7.Update
 
-2024.04.08
+2024.04.08  
 Add CallBack function to the model to record and plot loss-epoch curve.
 
 2025.04.07  
