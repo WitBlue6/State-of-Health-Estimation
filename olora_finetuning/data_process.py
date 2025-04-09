@@ -98,7 +98,7 @@ def process_Oxford():
 	for index, row in df1.iterrows():
 		instruction = f"You are a SOH estimation expert.Estimate the SOH of a lithium-ion battery based on temperature, current, and voltage:[{row['environment_temperature_C']}, {row['current_A']}, {row['voltage_V']}].And give me the reason for your estimation."
 		input_text = f"{row['environment_temperature_C']}, {row['current_A']}, {row['voltage_V']}"
-		response_text = f"SOH is {row['SOH']:.3f}%.Because {row['Reason']}"
+		response_text = f"SOH is {row['SOH']:.3f}%.Because row['Reason']"
 		train_data.append({
 			"instruction": instruction,
 			"input": input_text,

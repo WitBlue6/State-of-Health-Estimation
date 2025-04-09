@@ -1,7 +1,7 @@
 {
   "alpha_pattern": {},
   "auto_mapping": null,
-  "base_model_name_or_path": "EleutherAI/pythia-31m",
+  "base_model_name_or_path": "EleutherAI/pythia-160m",
   "bias": "none",
   "corda_config": null,
   "eva_config": null,
@@ -24,8 +24,10 @@
   "rank_pattern": {},
   "revision": null,
   "target_modules": [
+    "query_key_value",
+    "dense_h_to_4h",
     "dense",
-    "query_key_value"
+    "dense_4h_to_h"
   ],
   "task_type": "CAUSAL_LM",
   "trainable_token_indices": null,
