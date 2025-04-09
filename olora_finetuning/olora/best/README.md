@@ -1,5 +1,5 @@
 ---
-base_model: EleutherAI/pythia-31m
+base_model: EleutherAI/pythia-160m
 library_name: peft
 ---
 

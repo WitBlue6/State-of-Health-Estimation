@@ -156,10 +156,18 @@ def train(
 	print(model)
 	print(model.print_trainable_parameters())
 	# add by lzh, adding MWA_CNN to model
-	device = torch.device("mps")  # 针对 MPS 后端
+	if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+		device = torch.device("mps")
+		print("✅ Using MPS (Apple Silicon)")
+	elif torch.cuda.is_available():
+		device = torch.device("cuda")
+		print(f"✅ Using CUDA (GPU {torch.cuda.get_device_name(0)})")
+	else:
+		device = torch.device("cpu")
+		print("⚠️ Using CPU (no MPS or CUDA found)")
 	dtype = torch.float32  # 使用一致的数据类型
 	model = model.to(device, dtype)
-	
+	print(f"✋Using Base Model {base_model}🤚")
 	#data_path = os.path.abspath(data_path)
 	data = load_dataset("json", data_files=data_path)  # here changed by lzh, add "json" to specific the file type
 
@@ -229,7 +237,7 @@ def train(
 	plt.grid(True)
 	plt.savefig(os.path.join("logs", 'loss_plot.png'))
 	plt.show()
-	
+
 def generate_prompt(example):
 	full_prompt = f"""Following the Instruction below, give me your Response.
 			### Instruction:
@@ -247,14 +255,14 @@ if __name__ == "__main__":
 	import argparse
 
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--base_model", type=str, default="EleutherAI/pythia-31m")
+	parser.add_argument("--base_model", type=str, default="EleutherAI/pythia-160m")  #31m  160m
 	parser.add_argument("--data_path", type=str, default="./dataset/battery_dataset.json")	# "yahma/alpaca-cleaned"
 	parser.add_argument("--output_dir", type=str, default="olora")
-	parser.add_argument("--batch_size", type=int, default=8)
-	parser.add_argument("--num_epochs", type=int, default=1.5) #0.2好像over fitting了
-	parser.add_argument("--learning_rate", type=float, default=1e-4)
+	parser.add_argument("--batch_size", type=int, default=32)
+	parser.add_argument("--num_epochs", type=int, default=3) #好像over fitting了
+	parser.add_argument("--learning_rate", type=float, default=2e-5)
 	parser.add_argument("--cutoff_len", type=int, default=256)
-	parser.add_argument("--val_set_size", type=int, default=4)
+	parser.add_argument("--val_set_size", type=int, default=0.1)
 	parser.add_argument("--quantize", action="store_true")
 	parser.add_argument("--eval_step", type=int, default=100)
 	parser.add_argument("--save_step", type=int, default=100)
@@ -262,7 +270,7 @@ if __name__ == "__main__":
 	parser.add_argument("--lora_r", type=int, default=8)
 	parser.add_argument("--lora_alpha", type=int, default=16)
 	parser.add_argument("--lora_dropout", type=float, default=0.05)
-	parser.add_argument("--lora_target_modules", type=str, default=["query_key_value", "dense"]) #, "dense", "dense_h_to_4h", "dense_4h_to_h"
+	parser.add_argument("--lora_target_modules", type=str, default=["query_key_value", "dense", "dense_h_to_4h", "dense_4h_to_h"]) #, "dense", "dense_h_to_4h", "dense_4h_to_h"
 	parser.add_argument("--torch_dtype", type=str, default="float16")
 	parser.add_argument("--init_lora_weights", type=str, default="olora")
 	parser.add_argument("--seed", type=int, default=None)

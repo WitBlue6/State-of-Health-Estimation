@@ -59,8 +59,12 @@ class MWA_CNN(nn.Module):
 		
 		self.input_dim = input_dim
 		self.numf = numf
-		self.device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-		
+		if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+			self.device = torch.device("mps")
+		elif torch.cuda.is_available():
+			self.device = torch.device("cuda")
+		else:
+			self.device = torch.device("cpu")
 		self.pre_conv = nn.Sequential(
 			nn.Conv1d(in_channels=1, out_channels=16, kernel_size=5, stride=2, padding=2),
 			nn.BatchNorm1d(16),

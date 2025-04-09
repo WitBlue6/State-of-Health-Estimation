@@ -1,19 +1,21 @@
 # Battery SOH Estimation with LLM
 
-## 1.Introduction
+## 1. Introduction
 This repository contains the code for the Battery SOH Estimation with LLM. 
+
+The repository tries to estimate with <mark>**_Pythia base model_**</mark> combined with <mark>**_LoRA layer_**</mark> and <mark>**_Multilayer wavelet attention CNN_**</mark>.
 
 The repository is based on the open source code from https://github.com/PHM-Code/MWA-CNN/tree/main to add MWA_CNN layer to the model and the repo https://github.com/huggingface/peft to add LoRA layer to the model.
 
-## 2.Environment
-Operating System: MacOS 15.3.1  
-Python Version: 3.11.11  
-CPU: Apple M4 16GB  
-GPU Accelerator: MPS  
+## 2. Environment
+Operating System: MacOS 15.3.1  / Windows 11
+Python Version: 3.11
+CPU: Apple M4 16GB  / Intel i5 16GB
+GPU Accelerator: MPS / CUDA 12.3 (NVIDIA GeForce RTX 3050 Laptop GPU)
 
 The required packages are listed in the *requirements.txt* file.
 
-## 3.Usage
+## 3. Usage
 To run the code, you need to install the required packages.
 ```bash
 pip install -r requirements.txt
@@ -36,7 +38,7 @@ After training, you can run the code with the following command to evaluate the 
 python modelWithCNN_predict.py
 ```
 
-## 4.Results
+## 4. Results
 The results of the evaluation are shown in the following table.
 ```bash
 ########Begining Output########
@@ -55,7 +57,7 @@ SOH is 99.399%.Because The Current is too high.
 
 As is shown in the table, the model can estimate the SOH of a lithium-ion battery based on temperature, current, and voltage.
 
-## 5.Promblems in the Model
+## 5. Promblems in the Model
 
 * The estimated SOH may be not accurate. The estimated SOH is always <mark>between 98.73% and 98.99%</mark>. It seems that the model is not performing well on the dataset.
 
@@ -63,23 +65,25 @@ As is shown in the table, the model can estimate the SOH of a lithium-ion batter
 
 * Because of limited memory and resources, **the model parameters are not large enough**.
 
-## 6.Future work
+## 6. Future work
 
-1. Try to fix the model to perform well on the dataset.
+* Try to fix the model to perform well on the dataset.
 
-2. Use larger model parameters to estimate the SOH of a lithium-ion battery.
+* Use larger model parameters to estimate the SOH of a lithium-ion battery.
 
-## 7.Update
+## 7. Update
 
-2024.04.08  
+* 2025-04-09  
+Port the code to Windows framework. Train the model with 160m parameters.
+
+* 2025-04-08  
 Add CallBack function to the model to record and plot loss-epoch curve.
 
-2025.04.07  
+* 2025-04-07  
 Fix the problem of the model repeating the same response by changing the way to generate the prompt. And train the model with given reasons by randomly generating the reasons.
 
-2025.04.06  
+* 2025-04-06  
 Fix the promblem of mismatch of the key in the model.
 
-2025.04.04  
+* 2025-04-04  
 Add the code to estimate the SOH of a lithium-ion battery with LLM.
-

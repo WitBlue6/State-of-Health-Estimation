@@ -9,7 +9,7 @@ import os
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
 # 加载微调后的模型
-base_model = "EleutherAI/pythia-31m"
+base_model = "EleutherAI/pythia-160m"
 model_path = "./olora/best"  # 
 cnn_state_dict_path = os.path.join(model_path, "cnn_model.pth")
 data_path = "./dataset/battery_dataset.json"
