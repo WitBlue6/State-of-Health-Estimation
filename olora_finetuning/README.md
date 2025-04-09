@@ -8,10 +8,10 @@ The repository tries to estimate with <mark>**_Pythia base model_**</mark> combi
 The repository is based on the open source code from https://github.com/PHM-Code/MWA-CNN/tree/main to add MWA_CNN layer to the model and the repo https://github.com/huggingface/peft to add LoRA layer to the model.
 
 ## 2. Environment
-Operating System: MacOS 15.3.1  / Windows 11
-Python Version: 3.11
-CPU: Apple M4 16GB  / Intel i5 16GB
-GPU Accelerator: MPS / CUDA 12.3 (NVIDIA GeForce RTX 3050 Laptop GPU)
+Operating System: MacOS 15.3.1  / Windows 11  
+Python Version: 3.11  
+CPU: Apple M4 16GB  / Intel i5 16GB  
+GPU Accelerator: MPS / CUDA 12.3 (NVIDIA GeForce RTX 3050 Laptop GPU)  
 
 The required packages are listed in the *requirements.txt* file.
 
