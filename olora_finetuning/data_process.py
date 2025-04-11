@@ -5,6 +5,13 @@ import numpy as np
 import random
 from scipy.interpolate import interp1d
 
+# Min-Max
+def min_max_normalize(data):
+    min_val = np.min(data)
+    max_val = np.max(data)
+    normalized_data = (data - min_val) / (max_val - min_val)
+    return normalized_data
+
 # 随机生成reason
 def generare_reason():
 	reason_list = ["The Voltage is too low.", "The Current is too high.", 
@@ -90,6 +97,13 @@ def process_Oxford():
 	dlen = len(df1)
 	print(df1.head())
 	print(df1.tail())
+
+	# 归一化
+	# df1["environment_temperature_C"] = min_max_normalize(df1["environment_temperature_C"].values)
+	# df1["current_A"] = min_max_normalize(df1["current_A"].values)
+	# df1["voltage_V"] = min_max_normalize(df1["voltage_V"].values)
+	# df1["SOH"] = min_max_normalize(df1["SOH"].values)
+	
 	# 生成原因
 	df1["Reason"] = df1.apply(lambda x: generare_reason(), axis=1)
 	# 生成训练数据
@@ -98,7 +112,7 @@ def process_Oxford():
 	for index, row in df1.iterrows():
 		instruction = f"You are a SOH estimation expert.Estimate the SOH of a lithium-ion battery based on temperature, current, and voltage:[{row['environment_temperature_C']}, {row['current_A']}, {row['voltage_V']}].And give me the reason for your estimation."
 		input_text = f"{row['environment_temperature_C']}, {row['current_A']}, {row['voltage_V']}"
-		response_text = f"SOH is {row['SOH']:.3f}%.Because row['Reason']"
+		response_text = f"SOH is {row['SOH']}%.Because row['Reason']"
 		train_data.append({
 			"instruction": instruction,
 			"input": input_text,

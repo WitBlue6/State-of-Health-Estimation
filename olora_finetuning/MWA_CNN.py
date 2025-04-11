@@ -23,6 +23,7 @@ from datasets import load_dataset
 from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, set_seed, AutoConfig
 import torch.nn as nn
+import random
 
 from utils import *
 from peft import (
@@ -57,6 +58,7 @@ def train(
 	base_model: str = "",
 	data_path: str = "",
 	output_dir: str = "olora",
+	log_dir: str = "logs",
 	batch_size: int = 16,
 	num_epochs: int = 1,
 	learning_rate: float = 3e-4,
@@ -171,11 +173,12 @@ def train(
 	#data_path = os.path.abspath(data_path)
 	data = load_dataset("json", data_files=data_path)  # here changed by lzh, add "json" to specific the file type
 
-	train_val = data["train"].train_test_split(test_size=val_set_size, shuffle=True, seed=42)
+	train_val = data["train"].train_test_split(test_size=val_set_size, shuffle=True, seed=random.randint(1, 1000))
 	train_data = train_val["train"].shuffle().map(generate_and_tokenize_prompt)
 	val_data = train_val["test"].shuffle().map(generate_and_tokenize_prompt)
-	loss_callback = LossRecorderCallback("logs")
+	
 	# --------------------Train-----------------
+	loss_callback = LossRecorderCallback(log_dir, save_step=save_step, output_dir=output_dir, save_cnn=True)
 	trainer = transformers.Trainer(
 		model=model,
 		train_dataset=train_data,
@@ -188,6 +191,7 @@ def train(
 			warmup_steps=50,
 			num_train_epochs=num_epochs,
 			learning_rate=learning_rate,
+			weight_decay=0.01,
 			logging_steps=100,
 			optim="adamw_torch",
 			eval_strategy="steps",
@@ -199,7 +203,7 @@ def train(
 			load_best_model_at_end=True,
 			ddp_find_unused_parameters=False if world_size > 1 else None,
 			# add by lzh
-			max_grad_norm=10,
+			max_grad_norm=1.0,
 			#fp16=False,
 			label_names=["labels"],
 		),
@@ -235,7 +239,7 @@ def train(
 	plt.title('Training and Validation Loss')
 	plt.legend()
 	plt.grid(True)
-	plt.savefig(os.path.join("logs", 'loss_plot.png'))
+	plt.savefig(os.path.join(log_dir, 'loss_plot.png'))
 	plt.show()
 
 def generate_prompt(example):
@@ -258,20 +262,21 @@ if __name__ == "__main__":
 	parser.add_argument("--base_model", type=str, default="EleutherAI/pythia-160m")  #31m  160m
 	parser.add_argument("--data_path", type=str, default="./dataset/battery_dataset.json")	# "yahma/alpaca-cleaned"
 	parser.add_argument("--output_dir", type=str, default="olora")
+	parser.add_argument("--log_dir", type=str, default="logs")
 	parser.add_argument("--batch_size", type=int, default=32)
-	parser.add_argument("--num_epochs", type=int, default=3) #好像over fitting了
-	parser.add_argument("--learning_rate", type=float, default=2e-5)
+	parser.add_argument("--num_epochs", type=int, default=5) #好像over fitting了
+	parser.add_argument("--learning_rate", type=float, default=1e-5)
 	parser.add_argument("--cutoff_len", type=int, default=256)
 	parser.add_argument("--val_set_size", type=int, default=0.1)
 	parser.add_argument("--quantize", action="store_true")
 	parser.add_argument("--eval_step", type=int, default=100)
 	parser.add_argument("--save_step", type=int, default=100)
 	parser.add_argument("--device_map", type=str, default="auto")
-	parser.add_argument("--lora_r", type=int, default=8)
-	parser.add_argument("--lora_alpha", type=int, default=16)
-	parser.add_argument("--lora_dropout", type=float, default=0.05)
-	parser.add_argument("--lora_target_modules", type=str, default=["query_key_value", "dense", "dense_h_to_4h", "dense_4h_to_h"]) #, "dense", "dense_h_to_4h", "dense_4h_to_h"
-	parser.add_argument("--torch_dtype", type=str, default="float16")
+	parser.add_argument("--lora_r", type=int, default=32)
+	parser.add_argument("--lora_alpha", type=int, default=64)
+	parser.add_argument("--lora_dropout", type=float, default=0.1)
+	parser.add_argument("--lora_target_modules", type=str, default=["query_key_value"]) #, "dense", "dense_h_to_4h", "dense_4h_to_h"
+	parser.add_argument("--torch_dtype", type=str, default="float32")
 	parser.add_argument("--init_lora_weights", type=str, default="olora")
 	parser.add_argument("--seed", type=int, default=None)
 
@@ -281,6 +286,7 @@ if __name__ == "__main__":
 		base_model=args.base_model,
 		data_path=args.data_path,
 		output_dir=args.output_dir,
+		log_dir=args.log_dir,
 		batch_size=args.batch_size,
 		num_epochs=args.num_epochs,
 		learning_rate=args.learning_rate,

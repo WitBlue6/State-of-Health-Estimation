@@ -280,12 +280,15 @@ def fix_adapter_weights(model, adapter_path):
 		return None
 	
 class LossRecorderCallback(TrainerCallback):
-	def __init__(self, log_dir="logs"):
+	def __init__(self, log_dir="logs", save_step=100, output_dir="olora", save_cnn=True):
 		super().__init__()
 		self.log_dir = log_dir
+		self.save_step = save_step
+		self.output_dir = output_dir
 		self.losses = []
 		self.eval_losses = []
 		self.steps = []
+		self.save_cnn = save_cnn
 		os.makedirs(log_dir, exist_ok=True)
 		self.train_log_path = os.path.join(log_dir, "train_loss.csv")
 		self.eval_log_path = os.path.join(log_dir, "eval_loss.csv")
@@ -314,3 +317,9 @@ class LossRecorderCallback(TrainerCallback):
 				writer.writerow([step, logs["eval_loss"]])
 				self.steps.append(step)
 				self.eval_losses.append(logs["eval_loss"])
+	def on_step_end(self, args, state, control, **kwargs):
+		if state.global_step % self.save_step == 0 and self.save_cnn:
+			# 保存模型
+			cnn_model_path = os.path.join(self.output_dir, f"checkpoint-{state.global_step}")
+			os.makedirs(cnn_model_path, exist_ok=True)  # 创建
+			torch.save(kwargs['model'].base_model.cnn.state_dict(), os.path.join(cnn_model_path, "cnn_model.pth"))

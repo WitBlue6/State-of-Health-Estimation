@@ -14,7 +14,7 @@ model_path = "./olora/best"  #
 cnn_state_dict_path = os.path.join(model_path, "cnn_model.pth")
 data_path = "./dataset/battery_dataset.json"
 #adapter_path = os.path.join(model_path, "training_args.bin")
-model_kwargs = {"torch_dtype": getattr(torch, "float16"), "device_map": "auto"}
+model_kwargs = {"torch_dtype": getattr(torch, "float32"), "device_map": "auto"}
 
 ## Model Construction
 config = AutoConfig.from_pretrained(base_model, **model_kwargs)
@@ -31,29 +31,46 @@ tokenizer = AutoTokenizer.from_pretrained(model_path)
 
 # 输入指令
 data = load_dataset('json', data_files=data_path)
-i = randint(1, len(data["train"]) - 1)
-prompt, target = generate_prompt(data['train'][i])
 
-# 编码输入
-inputs = tokenizer(prompt, truncation=True, max_length=256, padding=False, return_tensors="pt")
+# 随机输出N个样本验证
+soh_plist = []
+soh_tlist = []
+N = 20
+for j in range(N):
+    i = randint(1, len(data["train"]) - 1)
+    prompt, target = generate_prompt(data['train'][i])
+    # 模型输出
+    inputs = tokenizer(prompt, truncation=True, max_length=256, padding=False, return_tensors="pt")
+    output_tokens = model.generate(
+		**inputs,
+		max_new_tokens=80,
+		do_sample=True,
+		temperature=0.4,
+		top_p=0.70,
+		top_k=50,
+		eos_token_id=tokenizer.eos_token_id,
+		pad_token_id=tokenizer.pad_token_id,
+		#num_return_sequences=1,
+		#repetition_penalty=0.2
+	)
+    target_predicted = tokenizer.decode(output_tokens[0], skip_special_tokens=True).strip()
+    input_parms = prompt.split("### Input:")[1].split("### Response:")[0].strip()
+    soh_predicted = target_predicted.split("SOH is")[1].split("%")[0].strip()
+    soh_target = target.split("SOH is")[1].split("%")[0].strip()
+    soh_plist.append(float(soh_predicted))
+    soh_tlist.append(float(soh_target))
+    print(f"\nSample {i}:  {input_parms}")
+    print(f"Predicted SOH: {soh_predicted}%  vs  Target SOH: {soh_target}%")
+    if (j == N-1):
+        print("########Begining Output########")
+        print(target_predicted)
+        print("########End Output########")
+        print("########Begining Target########")
+        print(target)
+        print("########End Target########")
+    
 
-output_tokens = model.generate(
-	**inputs,
-	max_new_tokens=80,
-	do_sample=False,
-	temperature=0.2,
-	top_p=0.70,
-	top_k=50,
-	eos_token_id=tokenizer.eos_token_id,
-	pad_token_id=tokenizer.pad_token_id,
-	#num_return_sequences=1,
-	#repetition_penalty=0.2
-)
 
-target_predicted = tokenizer.decode(output_tokens[0], skip_special_tokens=True).strip()
-print("########Begining Output########")
-print(target_predicted)
-print("########End Output########")
-print("########Begining Target########")
-print(target)
-print("########End Target########")
+
+
+
