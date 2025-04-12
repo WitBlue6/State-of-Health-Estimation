@@ -14,6 +14,7 @@
 
 
 import os
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 import re
 from typing import List, Optional
 import numpy as np
@@ -33,7 +34,6 @@ from peft import (
 
 # need to add this for macos
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
-
 class MWA_Trainer(transformers.Trainer):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
@@ -264,8 +264,8 @@ if __name__ == "__main__":
 	parser.add_argument("--output_dir", type=str, default="olora")
 	parser.add_argument("--log_dir", type=str, default="logs")
 	parser.add_argument("--batch_size", type=int, default=32)
-	parser.add_argument("--num_epochs", type=int, default=5) #好像over fitting了
-	parser.add_argument("--learning_rate", type=float, default=1e-5)
+	parser.add_argument("--num_epochs", type=int, default=25) #好像over fitting了
+	parser.add_argument("--learning_rate", type=float, default=2e-5)
 	parser.add_argument("--cutoff_len", type=int, default=256)
 	parser.add_argument("--val_set_size", type=int, default=0.1)
 	parser.add_argument("--quantize", action="store_true")
