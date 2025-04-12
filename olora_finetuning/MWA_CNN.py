@@ -222,8 +222,8 @@ def train(
 		shutil.rmtree(output_best_dir)
 	if os.path.exists(output_dir):
 		shutil.rmtree(output_dir)
-	
 	print("Save Best Model...")
+
 	best_model = trainer.model
 
 	# 实际上发现读取预测模型时权重名也有嵌套，虽然有warning但应该不影响
