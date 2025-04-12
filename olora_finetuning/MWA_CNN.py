@@ -75,6 +75,7 @@ def train(
 	torch_dtype: str = "float16",
 	init_lora_weights="olora",
 	seed: Optional[int] = None,
+	resume_from_checkpoint: Optional[str] = None,
 ):
 	# Set device_map to the right place when enabling DDP.
 	world_size = int(os.environ.get("WORLD_SIZE", 0)) or int(os.environ.get("PMI_SIZE", 0))
@@ -95,12 +96,25 @@ def train(
 		)
 	#model = AutoModelForCausalLM.from_pretrained(base_model, **model_kwargs)
 	# add by lzh
+	# ------------------ Get Base Model -----------------
 	config = AutoConfig.from_pretrained(base_model, **model_kwargs)
-	model = AutoModelForCausalLM.from_pretrained(base_model, config=config)
+	# resume_from_checkpoint
+	if resume_from_checkpoint is not None:
+		print(f'👍Resume from CheckPoint:{resume_from_checkpoint}...')
+		model = AutoModelForCausalLM.from_pretrained(resume_from_checkpoint, config=config)
+	else:
+		model = AutoModelForCausalLM.from_pretrained(base_model, config=config)
+
 	mwa_cnn = MWA_CNN(input_dim=64)
+	# 加载CNN权重
+	if resume_from_checkpoint is not None:
+		cnn_state_dict_path = os.path.join(resume_from_checkpoint, "cnn_model.pth")
+		mwa_cnn.load_state_dict(torch.load(cnn_state_dict_path))
+		print(f'👍Load CNN Weights from {cnn_state_dict_path}...')
 	model = TransformerWithCNN(model, mwa_cnn, config)
-	
-	tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True)
+	tokenizer_path = resume_from_checkpoint if resume_from_checkpoint else base_model
+	tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
+
 	# For some tokenizer with no pad token like llama
 	if tokenizer.pad_token is None:
 		tokenizer.pad_token = tokenizer.eos_token
@@ -145,6 +159,7 @@ def train(
 		tokenized_full_prompt = tokenize(full_prompt, target)
 		return tokenized_full_prompt
 
+	# ------------------------ Get LoRA Config Model --------------------
 	config = LoraConfig(
 		r=lora_r,
 		lora_alpha=lora_alpha,
@@ -152,7 +167,7 @@ def train(
 		lora_dropout=lora_dropout,
 		bias="none",
 		task_type="CAUSAL_LM",
-		init_lora_weights=init_lora_weights,
+		init_lora_weights=resume_from_checkpoint if resume_from_checkpoint else init_lora_weights,
 	)
 	model = get_peft_model(model, config)
 	print(model)
@@ -280,6 +295,7 @@ if __name__ == "__main__":
 	parser.add_argument("--torch_dtype", type=str, default="float32")
 	parser.add_argument("--init_lora_weights", type=str, default="olora")
 	parser.add_argument("--seed", type=int, default=None)
+	parser.add_argument("--resume_from_checkpoint", type=str, default="./olora/checkpoint-13800")
 
 	args = parser.parse_args()
 
@@ -304,4 +320,5 @@ if __name__ == "__main__":
 		torch_dtype=args.torch_dtype,
 		init_lora_weights=args.init_lora_weights,
 		seed=args.seed,
+		resume_from_checkpoint=args.resume_from_checkpoint,
 	)
