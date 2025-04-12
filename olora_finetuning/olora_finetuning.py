@@ -14,6 +14,8 @@
 
 
 import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 from typing import List, Optional
 import numpy as np
 import torch
@@ -25,9 +27,6 @@ from peft import (
 	LoraConfig,
 	get_peft_model,
 )
-
-# need to add this for macos
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
 
 def compute_metrics(eval_pred):
 	logits, labels = eval_pred

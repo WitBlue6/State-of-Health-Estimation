@@ -14,6 +14,7 @@
 
 
 import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 import re
 from typing import List, Optional
@@ -33,7 +34,6 @@ from peft import (
 )
 
 # need to add this for macos
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
 class MWA_Trainer(transformers.Trainer):
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
@@ -223,6 +223,7 @@ def train(
 	if os.path.exists(output_dir):
 		shutil.rmtree(output_dir)
 	
+	trainer.save_model(output_dir)
 	print("Save Best Model...")
 	best_model = trainer.model
 
