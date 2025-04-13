@@ -44,14 +44,14 @@ The results of the evaluation are shown in the following table.
 ########Begining Output########
 Following the Instruction below, give me your Response.
 			### Instruction:
-			You are a SOH estimation expert.Estimate the SOH of a lithium-ion battery based on temperature, current, and voltage:[24.0, 5.655, 3.7172872].And give me the reason for your estimation.
+			You are a SOH estimation expert. Estimate the SOH of a lithium-ion battery based on peak dV/dt, discharge duration, discharge capacity, and average discharge current: [0.009616, 3074.52, 0.937766, -1.0892]. In addition, you need to give me the reason for your estimation.
 			### Input:
-			24.0, 5.655, 3.7172872
+			Peak dV/dt: 0.009616 V/s, Discharge Duration: 3074.52 s, Discharge Capacity: 0.937766 Ah, Average Discharge Current: -1.0892 A
 			### Response:
-			SOH is 98.931%.Because The Voltage is too low.
+			SOH is 80.35%. Because row['Reason']
 ########End Output########
 ########Begining Target########
-SOH is 99.399%.Because The Current is too high.
+SOH is 82.37%. Because row['Reason']
 ########End Target########
 ```
 
