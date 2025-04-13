@@ -59,19 +59,20 @@ As is shown in the table, the model can estimate the SOH of a lithium-ion batter
 
 ## 5. Promblems in the Model
 
-* The estimated SOH may be not accurate. The estimated SOH is always <mark>between 98.73% and 98.99%</mark>. It seems that the model is not performing well on the dataset.
+* The model will ***not give me the right reason for my estimation***. Because the dataset does not contain the reason for the estimation. And the reasons in training are randomly generated. So the model may not know the reason for the estimation.
 
-* The model will **not give me the right reason for my estimation**. Because the dataset does not contain the reason for the estimation. And the reasons in training are randomly generated. So the model may not know the reason for the estimation.
-
-* Because of limited memory and resources, **the model parameters are not large enough**.
+* The model use 4 different features to estimate the SOH. But the freatures may be ***difficult to be measured in actual situation***.
 
 ## 6. Future work
 
-* Try to fix the model to perform well on the dataset.
+* Try to get right reasons for the estimation.
 
-* Use larger model parameters to estimate the SOH of a lithium-ion battery.
+* Try to use more simple features to estimate the SOH.
 
 ## 7. Update
+
+* 2025-04-13
+Change the Dataset used to train the model and extract 4 different features ***(Peak dV/dt, Discharge Duration, Discharge Capacity and Average Discharge Current)*** to estimate SOH. Train the model with 1b parameters. 
 
 * 2025-04-09  
 Port the code to Windows framework. Train the model with 160m parameters.
