@@ -1,3 +1,7 @@
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from datasets import load_dataset
 from peft import PeftModel
@@ -5,11 +9,9 @@ from random import randint
 import torch
 from utils import TransformerWithCNN, MWA_CNN
 from MWA_CNN import generate_prompt
-import os
-
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
+import numpy as np
 # 加载微调后的模型
-base_model = "EleutherAI/pythia-160m"
+base_model = "EleutherAI/pythia-1b"
 model_path = "./olora/best"  # 
 cnn_state_dict_path = os.path.join(model_path, "cnn_model.pth")
 data_path = "./dataset/battery_dataset.json"
@@ -20,7 +22,11 @@ model_kwargs = {"torch_dtype": getattr(torch, "float32"), "device_map": "auto"}
 config = AutoConfig.from_pretrained(base_model, **model_kwargs)
 model = AutoModelForCausalLM.from_pretrained(base_model, config=config)
 mwa_cnn = MWA_CNN(input_dim=64)
-mwa_cnn.load_state_dict(torch.load(cnn_state_dict_path))
+if torch.cuda.is_available():
+    mwa_cnn.load_state_dict(torch.load(cnn_state_dict_path, map_location='cuda'))
+else:
+    mwa_cnn.load_state_dict(torch.load(cnn_state_dict_path, map_location='cpu'))
+
 model = TransformerWithCNN(model, mwa_cnn, config)
 #model = fix_adapter_weights(model, adapter_path)
 model = PeftModel.from_pretrained(model, model_path)
@@ -35,7 +41,7 @@ data = load_dataset('json', data_files=data_path)
 # 随机输出N个样本验证
 soh_plist = []
 soh_tlist = []
-N = 20
+N = 30
 for j in range(N):
     i = randint(1, len(data["train"]) - 1)
     prompt, target = generate_prompt(data['train'][i])
@@ -68,7 +74,10 @@ for j in range(N):
         print("########Begining Target########")
         print(target)
         print("########End Target########")
-    
+
+# 计算RMSE
+rmse = np.sqrt(sum((soh_plist[i] - soh_tlist[i]) ** 2 for i in range(N)) / N)
+print(f"RMSE: {rmse}")
 
 
 

@@ -15,8 +15,8 @@
 
 import os
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-import re
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 使用镜像网站
+
 from typing import List, Optional
 import numpy as np
 import torch
@@ -276,7 +276,7 @@ if __name__ == "__main__":
 	import argparse
 
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--base_model", type=str, default="EleutherAI/pythia-160m")  #31m  160m  EleutherAI/pythia-160m
+	parser.add_argument("--base_model", type=str, default="EleutherAI/pythia-1b")  #31m  160m  EleutherAI/pythia-160m
 	parser.add_argument("--data_path", type=str, default="./dataset/battery_dataset.json")	# "yahma/alpaca-cleaned"
 	parser.add_argument("--output_dir", type=str, default="olora")
 	parser.add_argument("--log_dir", type=str, default="logs")
@@ -296,7 +296,7 @@ if __name__ == "__main__":
 	parser.add_argument("--torch_dtype", type=str, default="float32")
 	parser.add_argument("--init_lora_weights", type=str, default="olora")
 	parser.add_argument("--seed", type=int, default=None)
-	parser.add_argument("--resume_from_checkpoint", type=str, default="./olora/checkpoint-13800")
+	parser.add_argument("--resume_from_checkpoint", type=str, default=None)
 
 	args = parser.parse_args()
 

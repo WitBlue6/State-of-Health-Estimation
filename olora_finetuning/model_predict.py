@@ -1,14 +1,12 @@
-from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
+
 from datasets import load_dataset
 from peft import PeftModel
 from random import randint
 import torch
-import os
 from olora_finetuning import generate_prompt
-
-
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
-
+from transformers import AutoModelForCausalLM, AutoTokenizer
 # Check and set device
 if torch.backends.mps.is_available():
     device = torch.device("mps")

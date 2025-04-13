@@ -18,7 +18,7 @@ def generare_reason():
 			   "The Temperature is too high.", "The Depth of Discharge is too low.", 
 			   "The Discharge Capacity is too low.", "The Charge Capacity is too low."]
 	reason = random.sample(reason_list, 1)[0]
-	print(reason)
+	#print(reason)
 	return reason
 def process_EVERLASTING(file_path):
 	df = pd.read_csv(file_path)
@@ -103,7 +103,7 @@ def process_Oxford():
 	# df1["current_A"] = min_max_normalize(df1["current_A"].values)
 	# df1["voltage_V"] = min_max_normalize(df1["voltage_V"].values)
 	# df1["SOH"] = min_max_normalize(df1["SOH"].values)
-	
+
 	# 生成原因
 	df1["Reason"] = df1.apply(lambda x: generare_reason(), axis=1)
 	# 生成训练数据
@@ -122,13 +122,108 @@ def process_Oxford():
 			print(f"Transforming No.{index} Data.....Total {dlen}")
 	return train_data
 
+def process_CALCE():
+	# 马里兰大学数据集
+	# https://gitcode.com/open-source-toolkit/6077e/?utm_source=tools_gitcode&index=top&type=card&&isLogin=1
+	#arr = np.load("./dataset/CALCE/CALCE.npy", allow_pickle=True) #数据量太少
+	#print(arr)
+
+	def load_one_sample(file_path):
+		# 读取一个excel，返回一个DataFrame
+		df = pd.read_excel(file_path, sheet_name=1)  # 使用第二个sheet
+		# 提取文件名中的电池信息
+		battery_name = os.path.basename(file_path).split('.')[0]
+		# 获取所有cycle的数据
+		cycles = df['Cycle_Index'].unique()
+		features_list = []
+		for cycle in cycles:
+			# 获取当前cycle的数据
+			cycle_data = df[df['Cycle_Index'] == cycle].reset_index(drop=True)
+			# 只筛选出放电数据
+			discharge_data = cycle_data[cycle_data['Current(A)'] < 0].reset_index(drop=True)
+			if len(discharge_data) <= 1:
+				continue		
+			# 找出dV/dt的峰值，取绝对值最大的值
+			peak_dvdt = discharge_data['dV/dt(V/s)'].abs().max()
+			discharge_duration = discharge_data['Test_Time(s)'].max() - discharge_data['Test_Time(s)'].min()
+			# 计算放电持续时间
+			discharge_duration = discharge_data['Test_Time(s)'].max() - discharge_data['Test_Time(s)'].min()
+			# 计算放电容量（使用每一个cycle的最大最小值之差）
+			discharge_capacity = discharge_data['Discharge_Capacity(Ah)'].max() - discharge_data['Discharge_Capacity(Ah)'].min()
+			# 计算放电平均电流
+			avg_discharge_current = discharge_data['Current(A)'].mean()
+			features = {
+				'battery_name': battery_name,
+				'cycle': cycle,
+				'peak_dvdt': peak_dvdt,
+				'discharge_duration': discharge_duration,
+				'discharge_capacity': discharge_capacity,
+				'avg_discharge_current': avg_discharge_current
+			}
+			features_list.append(features)
+		return features_list
+	
+	# 处理所有CALCE数据集文件
+	all_features = []
+	# 遍历所有电池文件夹
+	base_folder = './dataset/CALCE/CS2_35'  #35 36 37 38 四组电池数据
+	battery_folders = [f for f in os.listdir(base_folder) if os.path.isdir(os.path.join(base_folder, f)) and f.startswith('CS2_')]
+	if battery_folders == []:
+		battery_folders.append(base_folder)
+	for folder in battery_folders:
+		folder_path = os.path.join(base_folder, folder)
+		if not os.path.isdir(folder_path):
+			folder_path = base_folder
+		
+		excel_files = [f for f in os.listdir(folder_path) if f.endswith('.xlsx')]
+		for excel_file in excel_files:
+			file_path = os.path.join(folder_path, excel_file)
+			try:
+				features = load_one_sample(file_path)
+				all_features.extend(features)
+				print(f"Processed {file_path}, extracted {len(features)} cycles")
+			except Exception as e:
+				print(f"Error processing {file_path}: {e}")
+	
+	# 转换为DataFrame
+	features_df = pd.DataFrame(all_features)
+	# 计算SOH（以最大放电容量为基准）
+	max_capacity = features_df['discharge_capacity'].max()
+	features_df['SOH'] = features_df['discharge_capacity'] / max_capacity * 100
+	# 生成原因
+	features_df['Reason'] = features_df.apply(lambda x: generare_reason(), axis=1)
+	# 生成训练数据
+	train_data = []
+	dlen = len(features_df)
+	
+	for index, row in features_df.iterrows():
+		instruction = f"You are a SOH estimation expert. Estimate the SOH of a lithium-ion battery based on peak dV/dt, discharge duration, discharge capacity, and average discharge current: [{row['peak_dvdt']:.6f}, {row['discharge_duration']:.2f}, {row['discharge_capacity']:.6f}, {row['avg_discharge_current']:.4f}]. In addition, you need to give me the reason for your estimation."
+		input_text = f"Peak dV/dt: {row['peak_dvdt']:.6f} V/s, Discharge Duration: {row['discharge_duration']:.2f} s, Discharge Capacity: {row['discharge_capacity']:.6f} Ah, Average Discharge Current: {row['avg_discharge_current']:.4f} A"
+		response_text = f"SOH is {row['SOH']:.2f}%. Because row['Reason']"
+		
+		train_data.append({
+			"instruction": instruction,
+			"input": input_text,
+			"output": response_text
+		})
+		
+		if index % 100 == 0:
+			print(f"Transforming No.{index} Data.....Total {dlen}")
+	
+	return train_data
+
+
+
 # file_path = "./dataset/EIL-MJ1-015.csv"	# https://dx.doi.org/10.5522/04/12159462.v1  有效数据太少
 #file_path = "./dataset/DrivingAgeing_T25_SOC10-90_Vito_Cell89_AllData.csv"  #EVERLASTING project DOI: 10.4121/13739296 SOH计算不明确
 #file_path = "./dataset/NMC_cycling_data.xlsx"  # NMC https://data.mendeley.com/datasets/k6v83s2xdm/1  数据量少，训练不到
 
 #train_data = process_EVERLASTING(file_path)
 #train_data = process_NMC(file_path)
-train_data = process_Oxford()  # 牛津电池实验室,很好,缺少日志信息
+#train_data = process_Oxford()  # 牛津电池实验室,很好,缺少日志信息
+
+train_data = process_CALCE()  # 马里兰大学，数据量大，缺少日志信息
+
 # 保存为 JSON 格式，供微调使用
 output_json_path = "./dataset/battery_dataset.json"
 
