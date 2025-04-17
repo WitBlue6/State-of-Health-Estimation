@@ -212,7 +212,51 @@ def process_CALCE():
 	
 	return train_data
 
-
+import re
+def process_1553B():
+	with open('./dataset/BC Data1_20250411_全速工作模式.bcd') as f:
+		data = f.read()
+		datas = re.findall(r'DATAS\d+=\s*(.*?)\s*(?=COMMENT\d+=|$)', data)
+	data_list = []
+	# 处理得到采集数据
+	for i, data_block in enumerate(datas):
+		#print(data_block)  # str: 0821 ea01 0800 0000 ....
+		# 分割字符串
+		items = data_block.split()
+		if len(items) < 32: # 说明是南航发的指令，大于32是数据指令
+			continue
+		# 字序号6-29对应索引7-30
+		tim_voltage = int (items[7]+items[8], 16) * 3.05 / 10000.0
+		pow_voltage = int (items[9]+items[10], 16) * 3.05 / 10000.0
+		ctl_voltage = int (items[11]+items[12], 16) * 3.05 / 10000.0
+		dsp_voltage = int (items[13]+items[14], 16) * 3.05 / 10000.0
+		tim_current = (int (items[15]+items[16], 16) * 3.05 - 25000.0) * 4.0 / 10000.0
+		pow_current = (int (items[17]+items[18], 16) * 3.05 - 25000.0) * 4.0 / 10000.0
+		ctl_current = (int (items[19]+items[20], 16) * 3.05 - 25000.0) * 4.0 / 10000.0
+		dsp_current = (int (items[21]+items[22], 16) * 3.05 - 25000.0) * 4.0 / 10000.0
+		tim_temperature = ((int (items[23]+items[24], 16) >> 8) & 0xFF) * 10.0 + ((int (items[23]+items[24], 16)) & 0xFF) / 10.0
+		pow_temperature = ((int (items[25]+items[26], 16) >> 8) & 0xFF) * 10.0 + ((int (items[25]+items[26], 16)) & 0xFF) / 10.0
+		ctl_temperature = ((int (items[27]+items[28], 16) >> 8) & 0xFF) * 10.0 + ((int (items[27]+items[28], 16))& 0xFF) / 10.0
+		dsp_temperature = ((int (items[29]+items[30], 16) >> 8) & 0xFF) * 10.0 + ((int (items[29]+items[30], 16)) & 0xFF) / 10.0
+		data_trans = {
+			"tim_voltage": tim_voltage,
+			"pow_voltage": pow_voltage,
+			"ctl_voltage": ctl_voltage,
+			"dsp_voltage": dsp_voltage,
+			"tim_current": tim_current,
+			"pow_current": pow_current,
+			"ctl_current": ctl_current,
+			"dsp_current": dsp_current,
+			"tim_temperature": tim_temperature,
+			"pow_temperature": pow_temperature,			
+			"ctl_temperature": ctl_temperature,
+			"dsp_temperature": dsp_temperature,	
+		}
+		data_list.append(data_trans)
+	for i in data_list:
+		print(i, '\n')
+	
+#print(datas)
 
 # file_path = "./dataset/EIL-MJ1-015.csv"	# https://dx.doi.org/10.5522/04/12159462.v1  有效数据太少
 #file_path = "./dataset/DrivingAgeing_T25_SOC10-90_Vito_Cell89_AllData.csv"  #EVERLASTING project DOI: 10.4121/13739296 SOH计算不明确
@@ -224,6 +268,7 @@ def process_CALCE():
 
 train_data = process_CALCE()  # 马里兰大学，数据量大，缺少日志信息
 
+#process_1553B()
 # 保存为 JSON 格式，供微调使用
 output_json_path = "./dataset/battery_dataset.json"
 
