@@ -5,6 +5,21 @@ import torch.nn as nn
 import numpy as np
 from utils import SOHPredictor
 import os
+import random
+
+def set_random_seed(seed=42):
+    """
+    设置随机数种子以确保实验可重复性
+    :param seed: 随机数种子，默认为42
+    """
+    random.seed(seed)  # 设置 Python 随机库种子
+    np.random.seed(seed)  # 设置 numpy 随机库种子
+    torch.manual_seed(seed)  # 设置 PyTorch CPU 随机数种子
+    torch.cuda.manual_seed(seed)  # 设置 PyTorch GPU 随机数种子
+    torch.cuda.manual_seed_all(seed)  # 如果有多张 GPU，设置所有 GPU 的随机种子
+    torch.mps.manual_seed(seed)  # 设置 PyTorch MPS 随机数种子
+    torch.backends.cudnn.deterministic = True  # 使得 GPU 使用确定性算法（可提高可复现性，但可能稍慢）
+    torch.backends.cudnn.benchmark = False  # 禁用 cudnn 自动选择最优算法（用于保证复现性）
 
 def Standardization(data):
     """
@@ -65,11 +80,15 @@ def train(
     batch_size: int = 32,
     learning_rate: float = 1e-4,
     weight_decay: float = 0.01,
-    normalize: bool = True
+    normalize: bool = True,
+    seed: int = 42
 ):
     """
     训练模型
     """
+    # 设置随机数种子
+    if seed is not None:
+        set_random_seed(seed)
     # 设备选择
     if torch.backends.mps.is_available() and torch.backends.mps.is_built():
         device = torch.device("mps")
@@ -84,9 +103,11 @@ def train(
     # 加载数据
     prompts = load_prompts(data_path)
     # 加载LLM
+    print(f'Loading LLM from {base_model}...')
     model = AutoModelForCausalLM.from_pretrained(base_model).to(device)
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     # 生成特征
+    print(f'Generating features for {len(prompts)} samples...')
     features = generate_features(model, tokenizer, prompts, device)
     if normalize:
         print('Normalizing Features...')
@@ -124,11 +145,12 @@ if __name__ == "__main__":
     parser.add_argument("--base_model", type=str, default='EleutherAI/pythia-160m')
     parser.add_argument("--data_path", type=str, default='./dataset/1533B.json')
     parser.add_argument("--output_path", type=str, default='./outputs')
-    parser.add_argument("--num_epochs", type=int, default=220)
+    parser.add_argument("--num_epochs", type=int, default=180)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--learning_rate", type=float, default=1e-5)
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--normalize", type=bool, default=True, help="是否标准化")
+    parser.add_argument("--seed", type=int, default=42)
 
     args = parser.parse_args()
     train(**vars(args))

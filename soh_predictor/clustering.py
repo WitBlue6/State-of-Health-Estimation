@@ -1,13 +1,12 @@
+from sklearn.cluster import KMeans
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from datasets import load_dataset
+import numpy as np
 import torch
 import torch.nn as nn
-from model import load_prompts, generate_features, Standardization, set_random_seed
-from utils import SOHPredictor
-import re
-import numpy as np
 import matplotlib.pyplot as plt
 import os
+from model import load_prompts, generate_features, Standardization
+import re
 
 def extract_features(prompt):
     """
@@ -45,12 +44,12 @@ def data_process(data_path):
     for i in range(dlen):  
         if i < nlen:
             for key in data_list[i]:
-                if key in ['timer voltage', 'power voltage', 'control voltage', 'dsp voltage']: #, 'power voltage', 'control voltage', 'dsp voltage'
-                    data_list[i][key] += np.random.normal(0, 0.21*voltage)  # 加白噪声
-                elif key in ['timer current', 'power current', 'control current', 'dsp current']: #, 'power current', 'control current', 'dsp current'
-                    data_list[i][key] += np.random.normal(0, 0.21*current)  # 加白噪声
-                elif key in ['timer temperature', 'power temperature', 'control temperature', 'dsp temperature']: # , 'power temperature', 'control temperature', 'dsp temperature'
-                    data_list[i][key] += np.random.normal(0, 0.21*temperature)  # 加白噪声
+                if key in ['timer voltage']: #, 'power voltage', 'control voltage', 'dsp voltage'
+                    data_list[i][key] += np.random.normal(0, 0.005*voltage)  # 加白噪声
+                elif key in ['timer current']: #, 'power current', 'control current', 'dsp current'
+                    data_list[i][key] += np.random.normal(0, 0.005*current)  # 加白噪声
+                elif key in ['timer temperature']: # , 'power temperature', 'control temperature', 'dsp temperature'
+                    data_list[i][key] += np.random.normal(0, 0.005*temperature)  # 加白噪声
             bad_data.append(data_list[i])
         else:
             init_data.append(data_list[i])
@@ -91,65 +90,41 @@ def data_process(data_path):
     prompts = list(map(generate_full_prompt, prompts))
     return prompts, len(bad_data)
 
-def detect_soh(soh_predictor, features, device, threshold=0.8, normal_loss=[0, 1]):
-    """
-    检测异常
-    :param soh_predictor: 训练好的SOH预测模型
-    :param features: 输入特征
-    :param threshold: 阈值
-    :param normal_loss: 正常时的平均损失和标准差
-    :return: SOH值和异常标志
-    """
-    soh_predictor.eval()
-    with torch.no_grad():
-        inputs = torch.tensor(features, dtype=torch.float32).to(device)
-        outputs = soh_predictor(inputs)
-        mse_loss = nn.MSELoss(reduction='none')
-        loss = mse_loss(outputs, inputs)
-        mean_loss = torch.mean(loss).item()
-        normalized_loss = (mean_loss - normal_loss[0]) / normal_loss[1]
-        soh = torch.clamp(torch.tensor((1 - normalized_loss) * 100), min=0, max=100).item()
-        if soh < threshold:
-            print(f'😁Anomaly detected! SOH: {soh}')
-            print(f'Loss: {mean_loss}')
-    return soh, False if soh >= threshold else True
 
-def soh_filter(data, filter='ma', window_size=5, alpha=0.2, sigma=1.0):
+def calculate_soh(features, center, noraml, threshold=0.8):
     """
-    对输出SOH进行滤波,提高模型鲁棒性
+    根据每个样本与聚类中心的距离计算SOH
+    :param features: 输入的特征数据
+    :param center: 聚类中心
+    :param threshold: 判断异常的阈值
+    :return: SOH值,异常标签
     """
-    if filter == 'ma':  #移动平均滤波
-        return np.convolve(data, np.ones(window_size)/window_size, mode='valid')
-    elif filter == 'ewma':  #指数加权移动平均滤波
-        return np.convolve(data, np.array([alpha**i for i in range(window_size)]), mode='same')
-    # 高斯滤波
-    elif filter == 'gaussian':
-        from scipy.ndimage import gaussian_filter1d
-        return gaussian_filter1d(data, sigma=sigma)
-    else:
-        print(f'‼️Warning: Unknown filter type {filter}, using no filter!!!')
-        return data
-
+    # 计算每个样本到聚类中心的欧氏距离
+    distances = np.linalg.norm(features - center, axis=1)
+    mean_d = np.mean(distances)
+    # 归一化距离，距离越大，SOH值越低
+    d = (mean_d - noraml[0]) / noraml[1]
+    soh = torch.clamp(torch.tensor((1 - d) * 100), min=0, max=100).item()
+    # 判断异常：距离超过阈值的点认为是异常
+    flags = soh < threshold * 100  
+    return soh, flags
 
 def model_detect(
         llm_path, 
         soh_path, 
         data_path, 
-        threshold=0.05, 
+        threshold=0.8, 
         num_normal_samples=8,
         num_detect_samples=8, 
         output_path='./outputs',
         normalize=True,
-        filter=True,
-        seed=42
+        clustering_method='kmeans'  # 聚类方法选择
     ):
     """
     加载模型,对数据进行预测
     :param model_path: 模型路径
     :param data_list: 要处理的数据列表
     :return: 预测结果"""
-    if seed is not None:
-        set_random_seed(seed)
     # Get device
     if torch.backends.mps.is_available() and torch.backends.mps.is_built():
         device = torch.device("mps")
@@ -173,49 +148,44 @@ def model_detect(
     if normalize:
         print('Normalizing Features...')
         features = Standardization(features) 
-    # 加载SOH模型权重
-    soh_predictor = SOHPredictor(input_dim=features.shape[1]).to(device)
-    soh_predictor.load_state_dict(torch.load(soh_path))
-
-    # 检测异常
-    print(f"⚠️Detecting {len(features)} samples...")
-    # 先根据正常工作时的样本得到正常时的loss大小
-    normal_features = features[nlen:]
-    # 从正常样本中随机选取num_detect_samples个样本作为正常样本
+    
+    # 从正常样本中选取一些来计算聚类中心
+    normal_features = features[nlen:]  # 这里假设后面的样本是正常的
     normal_features = normal_features[np.random.choice(len(normal_features), num_normal_samples, replace=False)]
-    print(f'😋Using Normal Samples: {len(normal_features)}')
-    soh_predictor.eval()
-    with torch.no_grad():
-        inputs = torch.tensor(normal_features, dtype=torch.float32).to(device)
-        outputs = soh_predictor(inputs)
-        mse_loss = nn.MSELoss(reduction='none')
-        loss = mse_loss(outputs, inputs)
-        normal_loss = [torch.mean(loss).item(), torch.std(loss).item()]
-    print(f'🤓Calculating Normal loss: {normal_loss}')
+    
+    # 使用 K-means 聚类方法来计算聚类中心
+    kmeans = KMeans(n_clusters=1, random_state=42)
+    kmeans.fit(normal_features)  # 获取聚类中心
+    cluster_center = kmeans.cluster_centers_[0]  # 获取聚类中心
 
-    # 按num_detect_samples个一组对样本进行SOH预测
+    # 先计算num_normal_samples个样本的平均距离
+    distances = np.linalg.norm(normal_features - cluster_center, axis=1)
+    avg_distance = np.mean(distances)
+    std_distance = np.std(distances)
+    print(f'Average Distance: {avg_distance}, Standard Deviation: {std_distance}')
+
+    # 计算所有样本的SOH
+    print(f"Calculating SOH for {len(features)} samples...")
     results = []
     flags = []
     for i in range(0, len(features), num_detect_samples):
         batch_features = features[i:i+num_detect_samples]
-        result, flag = detect_soh(soh_predictor, batch_features, device, threshold, normal_loss)
+        result, flag = calculate_soh(batch_features, cluster_center, [avg_distance, std_distance], threshold)
         results.append(result)
         flags.append(flag)
-    # 输出滤波
-    if filter:
-        results = soh_filter(results, filter='gaussian', sigma=2.0)
-    # 绘出结果图
+
+    # 绘制 SOH 曲线
     plt.figure(figsize=(12, 8))
     plt.plot(results, label='SOH')
     plt.axhline(y=threshold * 100, color='r', linestyle='--', label='Threshold')
-    plt.axvline(x=nlen//num_detect_samples, color='g', linestyle='--', label='Bad Data')
+    plt.axvline(x=nlen // num_detect_samples, color='g', linestyle='--', label='Bad Data')
     plt.xlabel('Batch Index')
     plt.ylabel('SOH Value')
-    plt.title('SOH Prediction')
-    plt.ylim([40, 103])
+    plt.title('SOH Prediction based on Clustering')
+    #plt.ylim([40, 103])
     plt.legend()
     plt.grid(True)
-    plt.savefig(os.path.join(output_path, 'soh_prediction.png'))
+    plt.savefig(os.path.join(output_path, 'soh_prediction_distance.png'))
     plt.show()
     print('📊Results has been saved')
 
@@ -227,12 +197,10 @@ if __name__ == "__main__":
     parser.add_argument("--soh_path", type=str, default='./outputs/soh_predictor.pth')
     parser.add_argument("--data_path", type=str, default='./dataset/1533B.json')
     parser.add_argument("--threshold", type=float, default=0.8)
-    parser.add_argument("--num_normal_samples", type=int, default=32, help="多少个正常样本用于求解正常时的loss")
-    parser.add_argument("--num_detect_samples", type=int, default=32, help="以多少个样本为一组进行预测，提高鲁棒性")
+    parser.add_argument("--num_normal_samples", type=int, default=16, help="多少个正常样本用于计算聚类中心")
+    parser.add_argument("--num_detect_samples", type=int, default=8, help="以多少个样本为一组进行预测，提高鲁棒性")
     parser.add_argument("--output_path", type=str, default="./outputs")
     parser.add_argument("--normalize", type=bool, default=True)
-    parser.add_argument("--filter", type=bool, default=True, help="是否进行输出滤波")
-    parser.add_argument("--seed", type=int, default=2077)
 
     args = parser.parse_args()
     model_detect(**vars(args))
