@@ -23,10 +23,20 @@ python estimate.py
 ```
 In the `estimate.py`, I have provided the Anomaly by `adding noise to the normal data.` So the results in `outputs` folder show the obvious anomaly in front of the normal data.
 ### 2.4 Kmeans Clustering
-In the `clustering.py`, I have provided the Kmeans Clustering of the features to estimate the SOH. But the results seem to be not good. So I have not used it in the project. You can try it yourself.
+In the `clustering.py`, I have provided the Kmeans Clustering of the features to estimate the SOH. But the results seem to be **not good**. So I have not used it in the project. You can try it yourself.
 ```bash
 python clustering.py
 ```
-## 3. Update
-- 2025-04-18: Add the Kmeans Clustering of the features to estimate the SOH.
-- 2025-04-17: Add the Code for Unsupervised SOH Estimation.
+## 3. Results
+The results are shown in the `outputs` folder. The results are as follows:
+- `outputs/soh_prediction.png`: The output plot of the SOH prediction.
+- `outputs/best_model.pth`: The model used to estimate the SOH.
+- `outputs/feature_scaler.pkl`: The model used to scale the features.
+
+## 4. Update
+- 2025-04-19  
+Changed the feature generation method by pooling the last three hidden layers of the pretrained LLM output. Improved the model structure.
+- 2025-04-18  
+Added the Kmeans Clustering of the features to estimate the SOH.
+- 2025-04-17  
+Added the Code for Unsupervised SOH Estimation.

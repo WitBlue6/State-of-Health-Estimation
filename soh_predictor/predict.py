@@ -1,4 +1,7 @@
+import os
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 使用镜像网站
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from sklearn.preprocessing import StandardScaler
 from datasets import load_dataset
 import torch
 import torch.nn as nn
@@ -7,7 +10,6 @@ from utils import SOHPredictor
 import re
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 
 def extract_features(prompt):
     """
@@ -38,19 +40,20 @@ def data_process(data_path):
     tim_voltage = [d['timer voltage'] for d in data_list]
     tim_current = [d['timer current'] for d in data_list]
     tim_temperature = [d['timer temperature'] for d in data_list]
-    voltage = sum(tim_voltage) / len(tim_voltage)
-    current = sum(tim_current) / len(tim_current)
-    temperature = sum(tim_temperature) / len(tim_temperature)
+    voltage = 0.01 * (sum(tim_voltage) / len(tim_voltage))
+    current = 0.01 * (sum(tim_current) / len(tim_current))
+    temperature = 0.01 * (sum(tim_temperature) / len(tim_temperature))
+    print(voltage, current, temperature)
     # 加噪声处理
     for i in range(dlen):  
         if i < nlen:
             for key in data_list[i]:
-                if key in ['timer voltage', 'power voltage', 'control voltage', 'dsp voltage']: #, 'power voltage', 'control voltage', 'dsp voltage'
-                    data_list[i][key] += np.random.normal(0, 0.21*voltage)  # 加白噪声
-                elif key in ['timer current', 'power current', 'control current', 'dsp current']: #, 'power current', 'control current', 'dsp current'
-                    data_list[i][key] += np.random.normal(0, 0.21*current)  # 加白噪声
-                elif key in ['timer temperature', 'power temperature', 'control temperature', 'dsp temperature']: # , 'power temperature', 'control temperature', 'dsp temperature'
-                    data_list[i][key] += np.random.normal(0, 0.21*temperature)  # 加白噪声
+                if key in ['timer voltage', 'power voltage']: #, 'power voltage', 'control voltage', 'dsp voltage'
+                    data_list[i][key] += np.random.normal(0, voltage)  # 加白噪声
+                elif key in ['timer current', 'power current']: #, 'power current', 'control current', 'dsp current'
+                    data_list[i][key] += np.random.normal(0, current)  # 加白噪声
+                elif key in ['timer temperature', 'power temperature']: # , 'power temperature', 'control temperature', 'dsp temperature'
+                    data_list[i][key] += np.random.normal(0, temperature)  # 加白噪声
             bad_data.append(data_list[i])
         else:
             init_data.append(data_list[i])
@@ -109,10 +112,11 @@ def detect_soh(soh_predictor, features, device, threshold=0.8, normal_loss=[0, 1
         mean_loss = torch.mean(loss).item()
         normalized_loss = (mean_loss - normal_loss[0]) / normal_loss[1]
         soh = torch.clamp(torch.tensor((1 - normalized_loss) * 100), min=0, max=100).item()
-        if soh < threshold:
+        is_anomaly = soh < (threshold * 100)
+        if is_anomaly:
             print(f'😁Anomaly detected! SOH: {soh}')
             print(f'Loss: {mean_loss}')
-    return soh, False if soh >= threshold else True
+    return soh
 
 def soh_filter(data, filter='ma', window_size=5, alpha=0.2, sigma=1.0):
     """
@@ -170,12 +174,19 @@ def model_detect(
     tokenizer = AutoTokenizer.from_pretrained(llm_path)
     print(f"Generating features for {len(prompts)} samples...")
     features = generate_features(model, tokenizer, prompts, device)
+    
     if normalize:
-        print('Normalizing Features...')
-        features = Standardization(features) 
+        print("Loading feature scaler...")
+        scaler_path = os.path.join(os.path.dirname(soh_path), "feature_scaler.pkl")
+        import joblib
+        feature_scaler = joblib.load(scaler_path)
+        features = feature_scaler.transform(features)
+
+
     # 加载SOH模型权重
+    checkpoint = torch.load(soh_path, map_location=device)
     soh_predictor = SOHPredictor(input_dim=features.shape[1]).to(device)
-    soh_predictor.load_state_dict(torch.load(soh_path))
+    soh_predictor.load_state_dict(checkpoint)
 
     # 检测异常
     print(f"⚠️Detecting {len(features)} samples...")
@@ -195,24 +206,30 @@ def model_detect(
 
     # 按num_detect_samples个一组对样本进行SOH预测
     results = []
-    flags = []
     for i in range(0, len(features), num_detect_samples):
         batch_features = features[i:i+num_detect_samples]
-        result, flag = detect_soh(soh_predictor, batch_features, device, threshold, normal_loss)
+        result = detect_soh(soh_predictor, batch_features, device, threshold, normal_loss)
         results.append(result)
-        flags.append(flag)
     # 输出滤波
     if filter:
-        results = soh_filter(results, filter='gaussian', sigma=2.0)
+        results = soh_filter(results, filter='gaussian', sigma=1.0)
+    flags = [True if result < (threshold * 100) else False for result in results]
     # 绘出结果图
-    plt.figure(figsize=(12, 8))
+    plt.figure(figsize=(6, 4))
     plt.plot(results, label='SOH')
     plt.axhline(y=threshold * 100, color='r', linestyle='--', label='Threshold')
     plt.axvline(x=nlen//num_detect_samples, color='g', linestyle='--', label='Bad Data')
+    anomaly_indices = [i for i, flag in enumerate(flags) if flag]
+    if anomaly_indices:
+        plt.scatter(
+            anomaly_indices, 
+            [results[i] for i in anomaly_indices],
+            color='red', marker='x', label='Detected Anomalies'
+        )
     plt.xlabel('Batch Index')
     plt.ylabel('SOH Value')
     plt.title('SOH Prediction')
-    plt.ylim([40, 103])
+    plt.ylim([40, 102])
     plt.legend()
     plt.grid(True)
     plt.savefig(os.path.join(output_path, 'soh_prediction.png'))
@@ -224,15 +241,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--llm_path", type=str, default='EleutherAI/pythia-160m')
-    parser.add_argument("--soh_path", type=str, default='./outputs/soh_predictor.pth')
+    parser.add_argument("--soh_path", type=str, default='./outputs/best_model.pth')
     parser.add_argument("--data_path", type=str, default='./dataset/1533B.json')
-    parser.add_argument("--threshold", type=float, default=0.8)
+    parser.add_argument("--threshold", type=float, default=0.9)
     parser.add_argument("--num_normal_samples", type=int, default=32, help="多少个正常样本用于求解正常时的loss")
     parser.add_argument("--num_detect_samples", type=int, default=32, help="以多少个样本为一组进行预测，提高鲁棒性")
     parser.add_argument("--output_path", type=str, default="./outputs")
     parser.add_argument("--normalize", type=bool, default=True)
     parser.add_argument("--filter", type=bool, default=True, help="是否进行输出滤波")
-    parser.add_argument("--seed", type=int, default=2077)
+    parser.add_argument("--seed", type=int, default=42)  #999
 
     args = parser.parse_args()
     model_detect(**vars(args))
