@@ -14,6 +14,7 @@
 
 
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"	 # 允许自动回退到 CPU
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 使用镜像网站
 
@@ -100,8 +101,8 @@ def train(
 	config = AutoConfig.from_pretrained(base_model, **model_kwargs)
 	# resume_from_checkpoint
 	if resume_from_checkpoint is not None:
-		print(f'👍Resume from CheckPoint:{resume_from_checkpoint}...')
-		model = AutoModelForCausalLM.from_pretrained(resume_from_checkpoint, config=config)
+		#print(f'👍Resume from CheckPoint:{resume_from_checkpoint}...')
+		model = AutoModelForCausalLM.from_pretrained(base_model, config=config)
 	else:
 		model = AutoModelForCausalLM.from_pretrained(base_model, config=config)
 
@@ -109,7 +110,7 @@ def train(
 	# 加载CNN权重
 	if resume_from_checkpoint is not None:
 		cnn_state_dict_path = os.path.join(resume_from_checkpoint, "cnn_model.pth")
-		mwa_cnn.load_state_dict(torch.load(cnn_state_dict_path))
+		#mwa_cnn.load_state_dict(torch.load(cnn_state_dict_path))
 		print(f'👍Load CNN Weights from {cnn_state_dict_path}...')
 	model = TransformerWithCNN(model, mwa_cnn, config)
 	tokenizer_path = resume_from_checkpoint if resume_from_checkpoint else base_model
@@ -167,9 +168,12 @@ def train(
 		lora_dropout=lora_dropout,
 		bias="none",
 		task_type="CAUSAL_LM",
-		init_lora_weights=resume_from_checkpoint if resume_from_checkpoint else init_lora_weights,
-	)
+		#init_lora_weights=resume_from_checkpoint if resume_from_checkpoint else init_lora_weights,
+	)	
 	model = get_peft_model(model, config)
+	if resume_from_checkpoint is not None:
+		print(f'👍Resume from CheckPoint:{resume_from_checkpoint}...')
+		model.load_state_dict(torch.load(os.path.join(resume_from_checkpoint, "transformerwithCNN.pth")))
 	print(model)
 	print(model.print_trainable_parameters())
 	# add by lzh, adding MWA_CNN to model
@@ -183,6 +187,9 @@ def train(
 		device = torch.device("cpu")
 		print("⚠️ Using CPU (no MPS or CUDA found)")
 	dtype = torch.float32  # 使用一致的数据类型
+	from accelerate import Accelerator
+	accelerator = Accelerator()
+	device = accelerator.device
 	model = model.to(device, dtype)
 	print(f"✋Using Base Model {base_model}🤚")
 	#data_path = os.path.abspath(data_path)
@@ -245,6 +252,7 @@ def train(
 
 	# 实际上发现读取预测模型时权重名也有嵌套，虽然有warning但应该不影响
 	trainer.save_model(output_best_dir)
+	torch.save(best_model.state_dict(), os.path.join(output_best_dir, "transformerwithCNN.pth"))
 	torch.save(best_model.base_model.cnn.state_dict(), os.path.join(output_best_dir, "cnn_model.pth"))
 	print("Best model has been saved to {output_best_dir}")
 	import matplotlib.pyplot as plt
@@ -276,8 +284,8 @@ if __name__ == "__main__":
 	import argparse
 
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--base_model", type=str, default="EleutherAI/pythia-1b")  #31m  160m  EleutherAI/pythia-160m
-	parser.add_argument("--data_path", type=str, default="./dataset/battery_dataset.json")	# "yahma/alpaca-cleaned"
+	parser.add_argument("--base_model", type=str, default="EleutherAI/pythia-160m")  #31m  160m  EleutherAI/pythia-160m
+	parser.add_argument("--data_path", type=str, default="./dataset/1533B_with_soh.json")	# "yahma/alpaca-cleaned"
 	parser.add_argument("--output_dir", type=str, default="olora")
 	parser.add_argument("--log_dir", type=str, default="logs")
 	parser.add_argument("--batch_size", type=int, default=32)
@@ -296,7 +304,7 @@ if __name__ == "__main__":
 	parser.add_argument("--torch_dtype", type=str, default="float32")
 	parser.add_argument("--init_lora_weights", type=str, default="olora")
 	parser.add_argument("--seed", type=int, default=None)
-	parser.add_argument("--resume_from_checkpoint", type=str, default=None)
+	parser.add_argument("--resume_from_checkpoint", type=str, default="./olora/best")
 
 	args = parser.parse_args()
 

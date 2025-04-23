@@ -7,6 +7,7 @@ from random import randint
 import torch
 from olora_finetuning import generate_prompt
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import numpy as np
 # Check and set device
 if torch.backends.mps.is_available():
     device = torch.device("mps")
@@ -58,11 +59,14 @@ for j in range(N):
     target_predicted = tokenizer.decode(output_tokens[0], skip_special_tokens=True).strip()
     input_parms = prompt.split("### Input:")[1].split("### Response:")[0].strip()
     soh_predicted = target_predicted.split("SOH is")[1].split("%")[0].strip()
+    full_predicted = target_predicted.split("### Response:")[1].strip()
     soh_target = target.split("SOH is")[1].split("%")[0].strip()
+    full_target = target.split("### Response:")[1].strip()
     soh_plist.append(float(soh_predicted))
     soh_tlist.append(float(soh_target))
     print(f"\nSample {i}:  {input_parms}")
     print(f"Predicted SOH: {soh_predicted}%  vs  Target SOH: {soh_target}%")
+    print(f"Predicted: {full_predicted}\nTarget: {full_target}")
     if (j == N-1):
         print("########Begining Output########")
         print(target_predicted)
@@ -70,3 +74,6 @@ for j in range(N):
         print("########Begining Target########")
         print(target)
         print("########End Target########")
+# 计算RMSE
+rmse = np.sqrt(sum((soh_plist[i] - soh_tlist[i]) ** 2 for i in range(N)) / N)
+print(f"RMSE: {rmse}")

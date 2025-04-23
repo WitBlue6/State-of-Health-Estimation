@@ -225,8 +225,8 @@ if __name__ == "__main__":
 	import argparse
 
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--base_model", type=str, default="EleutherAI/pythia-31m")
-	parser.add_argument("--data_path", type=str, default="./dataset/battery_dataset.json")  # "yahma/alpaca-cleaned"
+	parser.add_argument("--base_model", type=str, default="EleutherAI/pythia-1b")
+	parser.add_argument("--data_path", type=str, default="./dataset/1533B_with_soh.json")  # "yahma/alpaca-cleaned"
 	parser.add_argument("--output_dir", type=str, default="olora_simple")
 	parser.add_argument("--log_dir", type=str, default="logs_simple")
 	parser.add_argument("--batch_size", type=int, default=32)

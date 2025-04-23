@@ -1,14 +1,14 @@
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 使用镜像网站
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.feature_selection import mutual_info_regression
 from datasets import load_dataset
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as lr_scheduler
 import numpy as np
-from utils import SOHPredictor
+from utils import SOHPredictor, CustomLoss
 import random
 
 def set_random_seed(seed=42):
@@ -36,6 +36,76 @@ def Standardization(data):
     normalized_data = scaler.fit_transform(data)
     return scaler, normalized_data
 
+def noise_adder(prompts, noise_level=1e-13):
+    """"
+    对数据添加噪声(数据增强)
+    """
+    def extract_features(prompt):
+        """
+        从prompt中提取键值对
+        :param prompt: 输入的prompt字符串
+        :return: 提取的键值对字典
+        """
+        import re
+        pattern = r"([\w\s]+):([0-9\.]+)"
+        matches = re.findall(pattern, prompt)
+        feature_dict = {key.strip(): float(value) for key, value in matches}
+        return feature_dict
+    
+    def generate_full_prompt(example):
+        full_prompt = f"""
+                ### Instruction:
+                {example["instruction"]}
+                ### Input:
+                {example["input"]}
+                ### Description:
+                You need to extract the key features from the input. And notice the anomalies in the input.
+                """
+        return full_prompt
+
+    data_list = list(map(extract_features, prompts))  # 得到了原始数据字典列表
+    # 对数据进行处理,加白噪声干扰
+    bad_datas = []
+    # 得到数据的平均幅度值
+    tim_voltage = [d['timer voltage'] for d in data_list]
+    tim_current = [d['timer current'] for d in data_list]
+    tim_temperature = [d['timer temperature'] for d in data_list]
+    voltage = noise_level * (sum(tim_voltage) / len(tim_voltage))
+    current = noise_level * (sum(tim_current) / len(tim_current))
+    temperature = noise_level * (sum(tim_temperature) / len(tim_temperature))
+    for i in range(len(data_list)):  
+        for key in data_list[i]:
+            if key in ['timer voltage', 'power voltage']: #, 'power voltage', 'control voltage', 'dsp voltage'
+                data_list[i][key] += np.random.uniform(-voltage, voltage)  # 加白噪声
+            elif key in ['timer current', 'power current']: #, 'power current', 'control current', 'dsp current'
+                data_list[i][key] += np.random.uniform(-current, current)  # 加白噪声
+            elif key in ['timer temperature', 'power temperature']: # , 'power temperature', 'control temperature', 'dsp temperature'
+                data_list[i][key] += np.random.uniform(-temperature, temperature)  # 加白噪声
+        bad_datas.append(data_list[i])
+    prompts = []
+    for row in bad_datas:
+        instruction = f"You are a data feature extraction expert. Using the provided data, extract the features."
+        input_text = (
+            f"timer voltage:{row['timer voltage']}, "
+            f"power voltage:{row['power voltage']}, "
+            f"control voltage:{row['control voltage']}, "
+            f"dsp voltage:{row['dsp voltage']}, "
+            f"timer current:{row['timer current']}, "
+            f"power current:{row['power current']}, "
+            f"control current:{row['control current']}, "
+            f"dsp current:{row['dsp current']}, "
+            f"timer temperature:{row['timer temperature']}, "
+            f"power temperature:{row['power temperature']}, "
+            f"control temperature:{row['control temperature']}, "
+            f"dsp temperature:{row['dsp temperature']},"
+        )
+        prompts.append({
+            "instruction": instruction,
+            "input": input_text,
+        })
+    prompts = list(map(generate_full_prompt, prompts))
+    return prompts
+
 def generate_features(model, tokenizer, prompts, device):
     """
     生成特征用于模型输入
@@ -49,10 +119,15 @@ def generate_features(model, tokenizer, prompts, device):
             # # 取最后一层的隐藏状态作为特征
             # last_hidden_state = outputs.hidden_states[-1][:, -1, :]
             # 取最后三层的平均pooling
+            # hiddens = torch.stack(outputs.hidden_states[-3:])  # [3, batch, seq_len, dim]
+            # diff_features = hiddens[-1] - hiddens[0]  # 捕捉变化趋势
+            # abs_features = torch.abs(hiddens).mean(dim=0)  # 绝对值特征
+            # pooled = torch.cat([diff_features.mean(dim=1), abs_features.mean(dim=1)], dim=1)
             hiddens = torch.stack(outputs.hidden_states[-3:])  # [3, batch, seq_len, dim]
             weighted = hiddens * torch.tensor([0.2, 0.3, 0.5]).view(3,1,1,1).to(device)
             pooled = weighted.sum(dim=(0,2))  # [batch, dim]
             features.append(pooled.cpu().numpy())
+            
     return np.vstack(features)
 
 def generate_prompt(example):
@@ -61,17 +136,22 @@ def generate_prompt(example):
 			{example["instruction"]}
 			### Input:
 			{example["input"]}
+            ### Description:
+            You need to extract the key features from the input. And notice the anomalies in the input.
 			"""
 	return {'prompt':full_prompt}
 
-def load_prompts(data_path):
+def load_prompts(data_path, add_noise=False):
     """
     加载数据集
     """
     prompts = []
     data = load_dataset("json", data_files=data_path)['train']
-    #prompts = list(map(generate_prompt, data))
-    prompts = data.map(generate_prompt)['prompt']
+    if add_noise:
+        print('Adding Noise!!!')
+        prompts = noise_adder(data['input'])
+    else:
+        prompts = data.map(generate_prompt)['prompt']
     return prompts
 
 def train(
@@ -84,7 +164,8 @@ def train(
     weight_decay: float = 0.01,
     normalize: bool = True,
     seed: int = 42,
-    val_ratio: float = 0.2
+    val_ratio: float = 0.2,
+    add_noise: bool = False,
 ):
     """
     训练模型
@@ -104,7 +185,7 @@ def train(
         print("⚠️ Using CPU (no MPS or CUDA found)")
     dtype = torch.float32  # 使用一致的数据类型
     # 加载数据
-    prompts = load_prompts(data_path)
+    prompts = load_prompts(data_path, add_noise=add_noise)
     # 加载LLM
     print(f'Loading LLM from {base_model}...')
     model = AutoModelForCausalLM.from_pretrained(base_model).to(device)
@@ -121,15 +202,35 @@ def train(
         os.makedirs(output_path, exist_ok=True)
         import joblib
         joblib.dump(feature_scaler, os.path.join(output_path, "feature_scaler.pkl")) 
-    mi = mutual_info_regression(features, np.random.rand(len(features)))
-    print("特征自相关性:", mi)  # 若全部接近0，说明LLM特征提取可能失效
+    
+    np.set_printoptions(threshold=np.inf, linewidth=200, precision=6)
+    # 1. 统计特征重要性
+    from sklearn.ensemble import RandomForestRegressor
+    rf = RandomForestRegressor()
+    y_dummy = np.random.rand(len(features))  # 或用真实标签
+    rf.fit(features, y_dummy)
+    print("特征重要性Top20:\n", np.sort(rf.feature_importances_)[-20:])
+    
+    # 2. 可视化
+    from matplotlib import pyplot as plt
+    plt.figure(figsize=(12, 4))
+    plt.subplot(121)
+    plt.hist(features.ravel(), bins=50)
+    plt.title("Feature Distribution")
+    
+    plt.subplot(122)
+    plt.imshow(features[:100].T, aspect='auto', cmap='viridis')
+    plt.colorbar()
+    plt.title("The first 100 samples Hotmap")
+    plt.savefig(os.path.join(output_path, "feature_distribution.png"))
+    #plt.show()
 
     input_dim = features.shape[1]
     print(f'Input Dim:{input_dim}')
 
     # 构建预测模型
     soh_predictor = SOHPredictor(input_dim).to(device)
-    criterion = nn.MSELoss()
+    criterion = nn.MSELoss()#CustomLoss(alpha=0.5)
     optimizer = torch.optim.Adam(
         soh_predictor.parameters(), 
         lr=learning_rate, 
@@ -213,16 +314,17 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--base_model", type=str, default='EleutherAI/pythia-160m')
+    parser.add_argument("--base_model", type=str, default='EleutherAI/pythia-160m') # EleutherAI/pythia-160m
     parser.add_argument("--data_path", type=str, default='./dataset/1533B.json')
     parser.add_argument("--output_path", type=str, default='./outputs')
-    parser.add_argument("--num_epochs", type=int, default=400)
+    parser.add_argument("--num_epochs", type=int, default=300)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--learning_rate", type=float, default=3e-4)
     parser.add_argument("--weight_decay", type=float, default=0.05)
-    parser.add_argument("--normalize", type=bool, default=True, help="是否标准化")
+    parser.add_argument("--normalize", type=bool, default=False, help="是否标准化")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--val_ratio", type=float, default=0.2, help="验证集比例")
+    parser.add_argument("--add_noise", type=bool, default=False, help="加噪声数据增强")
 
     args = parser.parse_args()
     train(**vars(args))

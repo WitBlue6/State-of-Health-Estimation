@@ -70,6 +70,8 @@ As is shown in the table, the model can estimate the SOH of a lithium-ion batter
 * Try to use more simple features to estimate the SOH.
 
 ## 7. Update
+* 2025-04-23
+Change the Dataset used in the model.
 
 * 2025-04-13  
 Change the Dataset used to train the model and extract 4 different features ***(Peak dV/dt, Discharge Duration, Discharge Capacity and Average Discharge Current)*** to estimate SOH. Train the model with 1b parameters. 

@@ -1,7 +1,7 @@
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 使用镜像网站
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from datasets import load_dataset
 import torch
 import torch.nn as nn
@@ -40,19 +40,19 @@ def data_process(data_path):
     tim_voltage = [d['timer voltage'] for d in data_list]
     tim_current = [d['timer current'] for d in data_list]
     tim_temperature = [d['timer temperature'] for d in data_list]
-    voltage = 0.01 * (sum(tim_voltage) / len(tim_voltage))
-    current = 0.01 * (sum(tim_current) / len(tim_current))
-    temperature = 0.01 * (sum(tim_temperature) / len(tim_temperature))
+    voltage = 0.001 * (sum(tim_voltage) / len(tim_voltage))
+    current = 0.001 * (sum(tim_current) / len(tim_current))
+    temperature = 0.001 * (sum(tim_temperature) / len(tim_temperature))
     print(voltage, current, temperature)
     # 加噪声处理
-    for i in range(dlen):  
+    for i in range(dlen): 
         if i < nlen:
             for key in data_list[i]:
-                if key in ['timer voltage', 'power voltage']: #, 'power voltage', 'control voltage', 'dsp voltage'
+                if key in ['timer voltage']: #, 'power voltage', 'control voltage', 'dsp voltage'
                     data_list[i][key] += np.random.normal(0, voltage)  # 加白噪声
-                elif key in ['timer current', 'power current']: #, 'power current', 'control current', 'dsp current'
+                elif key in ['timer current']: #, 'power current', 'control current', 'dsp current'
                     data_list[i][key] += np.random.normal(0, current)  # 加白噪声
-                elif key in ['timer temperature', 'power temperature']: # , 'power temperature', 'control temperature', 'dsp temperature'
+                elif key in ['timer temperature']: # , 'power temperature', 'control temperature', 'dsp temperature'
                     data_list[i][key] += np.random.normal(0, temperature)  # 加白噪声
             bad_data.append(data_list[i])
         else:
@@ -65,7 +65,9 @@ def data_process(data_path):
                 {example["instruction"]}
                 ### Input:
                 {example["input"]}
-			"""
+                ### Description:
+                You need to extract the key features from the input. And notice the anomalies in the input.
+                """
         return full_prompt
     def generate_prompt(examples):
         prompts = []
@@ -229,7 +231,7 @@ def model_detect(
     plt.xlabel('Batch Index')
     plt.ylabel('SOH Value')
     plt.title('SOH Prediction')
-    plt.ylim([40, 102])
+    plt.ylim([0, 102])
     plt.legend()
     plt.grid(True)
     plt.savefig(os.path.join(output_path, 'soh_prediction.png'))
@@ -247,7 +249,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_normal_samples", type=int, default=32, help="多少个正常样本用于求解正常时的loss")
     parser.add_argument("--num_detect_samples", type=int, default=32, help="以多少个样本为一组进行预测，提高鲁棒性")
     parser.add_argument("--output_path", type=str, default="./outputs")
-    parser.add_argument("--normalize", type=bool, default=True)
+    parser.add_argument("--normalize", type=bool, default=False)
     parser.add_argument("--filter", type=bool, default=True, help="是否进行输出滤波")
     parser.add_argument("--seed", type=int, default=42)  #999
 
