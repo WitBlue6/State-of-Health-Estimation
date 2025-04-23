@@ -34,7 +34,7 @@ The results are shown in the `outputs` folder. The results are as follows:
 - `outputs/feature_scaler.pkl`: The model used to scale the features.
 
 ## 4. Update
-- 2025-04-23
+- 2025-04-23  
 Improved the model structure. Add the code to generate anomaly data to LoRA model.
 - 2025-04-19  
 Changed the feature generation method by pooling the last three hidden layers of the pretrained LLM output. Improved the model structure.

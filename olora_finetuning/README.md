@@ -70,7 +70,7 @@ As is shown in the table, the model can estimate the SOH of a lithium-ion batter
 * Try to use more simple features to estimate the SOH.
 
 ## 7. Update
-* 2025-04-23
+* 2025-04-23  
 Change the Dataset used in the model.
 
 * 2025-04-13  
