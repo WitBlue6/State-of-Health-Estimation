@@ -40,9 +40,9 @@ def data_process(data_path):
     tim_voltage = [d['timer voltage'] for d in data_list]
     tim_current = [d['timer current'] for d in data_list]
     tim_temperature = [d['timer temperature'] for d in data_list]
-    voltage = 0.001 * (sum(tim_voltage) / len(tim_voltage))
-    current = 0.001 * (sum(tim_current) / len(tim_current))
-    temperature = 0.001 * (sum(tim_temperature) / len(tim_temperature))
+    voltage = 0.1 * (sum(tim_voltage) / len(tim_voltage))
+    current = 0.1 * (sum(tim_current) / len(tim_current))
+    temperature = 0.1 * (sum(tim_temperature) / len(tim_temperature))
     print(voltage, current, temperature)
     # 加噪声处理
     for i in range(dlen): 
@@ -249,7 +249,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_normal_samples", type=int, default=32, help="多少个正常样本用于求解正常时的loss")
     parser.add_argument("--num_detect_samples", type=int, default=32, help="以多少个样本为一组进行预测，提高鲁棒性")
     parser.add_argument("--output_path", type=str, default="./outputs")
-    parser.add_argument("--normalize", type=bool, default=False)
+    parser.add_argument("--normalize", type=bool, default=True)
     parser.add_argument("--filter", type=bool, default=True, help="是否进行输出滤波")
     parser.add_argument("--seed", type=int, default=42)  #999
 

@@ -36,7 +36,7 @@ def Standardization(data):
     normalized_data = scaler.fit_transform(data)
     return scaler, normalized_data
 
-def noise_adder(prompts, noise_level=1e-13):
+def noise_adder(prompts, noise_level=5e-3):
     """"
     对数据添加噪声(数据增强)
     """
@@ -320,11 +320,11 @@ if __name__ == "__main__":
     parser.add_argument("--num_epochs", type=int, default=300)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--learning_rate", type=float, default=3e-4)
-    parser.add_argument("--weight_decay", type=float, default=0.05)
-    parser.add_argument("--normalize", type=bool, default=False, help="是否标准化")
+    parser.add_argument("--weight_decay", type=float, default=0.01)
+    parser.add_argument("--normalize", type=bool, default=True, help="是否标准化")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--val_ratio", type=float, default=0.2, help="验证集比例")
-    parser.add_argument("--add_noise", type=bool, default=False, help="加噪声数据增强")
+    parser.add_argument("--add_noise", type=bool, default=True, help="加噪声数据增强")
 
     args = parser.parse_args()
     train(**vars(args))

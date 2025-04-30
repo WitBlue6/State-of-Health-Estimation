@@ -27,13 +27,33 @@ In the `clustering.py`, I have provided the Kmeans Clustering of the features to
 ```bash
 python clustering.py
 ```
-## 3. Results
+### 2.5 Estimate SOH with LoRA finetuned model
+In the `generate_anomaly.py`, I have provided the code to generate anomaly data to LoRA model. So you can try to let the LLM model estimate the SOH and give the reason for the anomaly by itself.  
+The only thing you need to do is to generate the anomaly data by yourself and go to `olora_finetuning` folder to finetune the model.
+### 2.6 Model without pretrained LLM
+In the `modelwithoutLLM.py`, I have provided the model without pretrained LLM. You can try it yourself.
+```bash
+python modelwithoutLLM.py
+```
+And the SOH estimation is achieved by the following command:
+```bash
+python predictwithoutLLM.py
+```
+The results are shown in the `outputs` folder.
+
+## 3 Results
 The results are shown in the `outputs` folder. The results are as follows:
 - `outputs/soh_prediction.png`: The output plot of the SOH prediction.
 - `outputs/best_model.pth`: The model used to estimate the SOH.
 - `outputs/feature_scaler.pkl`: The model used to scale the features.
+- `outputs/soh_predictionwithoutLLM.png`: The output plot of the SOH prediction without LLM.
+- `outputs/best_modelwithoutLLM.pth`: The model used to estimate the SOH without LLM.
+- `outputs/feature_scalerwithoutLLM.pkl`: The model used to scale the features without LLM. 
 
-## 4. Update
+## 4 Update
+- 2024-04-30  
+Added new anomaly generation method.  
+Use PID controller to control the threshold automatically.
 - 2025-04-23  
 Improved the model structure. Add the code to generate anomaly data to LoRA model.
 - 2025-04-19  
