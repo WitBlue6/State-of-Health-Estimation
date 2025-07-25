@@ -1,1 +1,4 @@
 /soh_classification/.env
+/soh_classification/dataset
+/olora_finetuning/dataset
+/soh_predictor/dataset

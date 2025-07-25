@@ -5,6 +5,8 @@ import random
 import pandas as pd
 import os
 import joblib
+from datetime import datetime
+import copy
 
 class AnomalyProcessor:
     '''
@@ -12,16 +14,22 @@ class AnomalyProcessor:
     '''
     def __init__(self, data_list=None):
         self.data_list = data_list
-        self.key_name =[
-            '光学模块电压',
-            '控制模块电流',
+        self.key_name = [
+            'Voltage', 'Current', 'Power'
         ]
-    def noise_adder(self, data_list, noise_level=0.15, noise_rate=0.3, **kwargs):
+    def increasingly_noise_adder(self, data_list_in, **kwargs):
+        """
+        按递增异常程度加入噪声干扰
+        """
+        pass
+
+    def noise_adder(self, data_list_in, noise_level=0.15, noise_rate=0.3, **kwargs):
         """
         对数据进行加噪声干扰
         """
         #print('Adding Noise with noise level:', noise_level)
         # 得到数据的平均幅度值
+        data_list = copy.deepcopy(data_list_in)
         avg_values = {}
         for key in data_list[0].keys(): 
             data = [data[key] for data in data_list]
@@ -40,50 +48,54 @@ class AnomalyProcessor:
             num_keys_to_select = random.randint(1, 3)
             #selected_keys = random.sample(available_keys, num_keys_to_select)
             selected_keys = available_keys
-            for key in selected_keys:
+            for key in self.key_name:
                 data_list[i][key] += np.random.normal(0, key_noise_map[key])
         return data_list
     
-    def missing_adder(self, data_list, missing_rate=1.0, **kwargs):
+    def missing_adder(self, data_list_in, missing_rate=1.0, **kwargs):
         """
         对数据进行加缺失干扰
         """
         #print('Adding Missing with missing rate:', missing_rate)
+        data_list = copy.deepcopy(data_list_in)
         for data in data_list:
             for key in data:
                 if random.random() < missing_rate:
                     data[key] = 0.0
         return data_list
     
-    def data_transform(self, data_list, transform_rate=1.0, **kwargs):
+    def data_transform(self, data_list_in, transform_level=1.0, transform_rate=1.0, **kwargs):
         """
         对数据进行加变换干扰
         """
+        data_list = copy.deepcopy(data_list_in)
         #print('Adding Transform with transform rate:', transform_rate)
         for data in data_list:
             for key in data:
                 if random.random() < transform_rate and key in self.key_name:
                     if random.random() < 0.5:
-                        data[key] *= random.uniform(0.8, 1.2)  # 缩放
+                        data[key] *= transform_level * random.uniform(0.8, 1.2)  # 缩放
                     else:
-                        data[key] += random.uniform(-0.5, 0.5)  # 平移
+                        data[key] += transform_level * random.uniform(-0.5, 0.5)  # 平移
         return data_list
 
-    def outlier_adder(self, data_list, outlier_rate=1.0, factor=2.0, **kwargs):
+    def outlier_adder(self, data_list_in, outlier_rate=1.0, factor=2.0, **kwargs):
         """
         对数据进行加异常值干扰
         """
         #print('Adding Outlier with outlier rate:', outlier_rate)
+        data_list = copy.deepcopy(data_list_in)
         for data in data_list:
             for key in data:
                 if random.random() < outlier_rate:
                     data[key] *= random.choice([-factor, factor])  # 异常值
         return data_list
     
-    def data_random_process(self, data_list, noise_level=0.15, rate=0.25, factor=5.0, **kwargs):
+    def data_random_process(self, data_list_in, noise_level=0.15, rate=0.25, factor=5.0, **kwargs):
         """
         对数据随机进行加噪声、加缺失、加变换干扰
         """
+        data_list = copy.deepcopy(data_list_in)
         for data in data_list:
             if random.random() > rate:
                 continue
@@ -112,7 +124,7 @@ class SOHDetector:
     :param auto_threshold: 是否启用自适应阈值
     :param pid_params: PID控制器参数
     '''
-    def __init__(self, soh_predictor, cls_model, normal_features, device, threshold=0.8, auto_threshold=False, pid_params=None, normalize=False, sclar_soh_path=None, sclar_cls_path=None, filter=False, print_log=False):
+    def __init__(self, soh_predictor, cls_model, normal_features, device, threshold=0.8, auto_threshold=False, pid_params=None, normalize=False, sclar_soh_path=None, sclar_cls_path=None, filter=False, print_log=False, log_path=None):
         self.soh_predictor = soh_predictor
         self.cls_model = cls_model
         self.loss_fn = nn.MSELoss(reduction='none')
@@ -123,10 +135,63 @@ class SOHDetector:
         self.threshold_alpha = 0.95
         self.normal_loss = None
         self.filter = filter
+        # 定义模块划分
+        self.module_ranges = [
+            (0, 6),    # Motor1
+            (6, 12),   # Motor2
+            (12, 18),  # Motor3
+            (18, 24),  # Motor4
+            [24, 27, 30],  # EulerX (Accelx, AngAcx, Eulerx)
+            [25, 28, 31],  # EulerY
+            [26, 29, 32],  # EulerZ
+            (33, 37),  # Power
+            (37, 40)   # Beidou
+        ]
         self.count = np.zeros(4+3+1+1)
+        # 可用性输出
+        self.module_rul = [np.inf] * len(self.module_ranges)
+        self.rul = np.inf
+        self.soh = 100.0
+        # 结构配置
+        self.module_category = {
+            "舵机1": "互补",
+            "舵机2": "互补",
+            "舵机3": "互补",
+            "舵机4": "互补",
+            "惯组X轴": "依赖",
+            "惯组Y轴": "依赖",
+            "惯组Z轴": "依赖",
+            "电源模块": "关键",
+            "北斗模块": "依赖"
+        }
+        self.module_index = {
+            0: 'Normal',
+            1: '舵机1',
+            2: '舵机2',
+            3: '舵机3',
+            4: '舵机4',
+            5: '惯组X轴',
+            6: '惯组Y轴',
+            7: '惯组Z轴',
+            8: '电源模块',
+            9: '北斗模块'
+        }
+        self.dependency_weights = {
+            0: 0, # Normal
+            1: 0, # 舵机1
+            2: 0, # 舵机2
+            3: 0, # 舵机3
+            4: 0, # 舵机4
+            5: 0.2, # 惯组X轴
+            6: 0.2, # 惯组Y轴
+            7: 0.2, # 惯组Z轴
+            8: 0, # 电源模块
+            9: 0.4, # 北斗模块
+        }
         # 用于存储历史样本，更新阈值
         self.remembered_features = []
         self.remembered_soh = []
+        self.remembered_module_soh = []
         self.remembered_num = 32
         # PID 控制器参数
         self.pid_params = pid_params if pid_params else {'Kp': 0.01, 'Ki': 0.000015, 'Kd': 0.2}
@@ -140,6 +205,7 @@ class SOHDetector:
         # 日志信息
         self.log_info = []
         self.print_log = print_log
+        self.log_path = log_path
         # 计算初始样本分布
         self.calculate_normal_loss()
 
@@ -156,18 +222,26 @@ class SOHDetector:
             inputs = torch.tensor(data_soh, dtype=torch.float32).to(self.device)
             outputs = self.soh_predictor(inputs)
             loss = self.loss_fn(outputs, inputs).to('cpu').numpy()
-            mean_loss = np.mean(loss, axis=0)
-            # 对某个模块计算SOH，最终SOH取最小值      
+            mean_loss = np.mean(loss, axis=0)  # 得到每个特征的loss
+            
+            # 按特征维度计算不同特征SOH   
             normalized_loss = np.zeros_like(mean_loss)
             soh = np.zeros_like(mean_loss)
             for i in range(len(mean_loss)):
                 normalized_loss[i] = abs(mean_loss[i] - normal_loss[0][i]) / (normal_loss[1][i] + 1e-6)
                 soh[i] = 100 * np.exp(-normalized_loss[i] * alpha)
-
-            # 得到SOH以及对应索引
+            
+            # 所有特征平均作为设备SOH
             mean_soh = np.mean(soh)
+            
             if self.filter:
                 mean_soh = self.smooth(mean_soh)
+
+            self.soh = mean_soh
+            # 根据每个模块的健康度，计算设备可用时间
+            module_rul = self.estimate_module_rul(soh)
+            rul, rul_info = self.estimate_device_rul(module_rul)
+
             # 如果只计算结果用于其他方法，不输出
             if output == False:
                 return mean_soh, self.threshold, soh
@@ -178,7 +252,106 @@ class SOHDetector:
             # 更新阈值
             if self.auto_threshold:
                 self.update_threshold(features, mean_soh, mean_loss)
-        return mean_soh, self.threshold, warning_type
+        return mean_soh, self.threshold, warning_type, rul, rul_info
+
+    def estimate_module_rul(self, all_soh, window=128, min_rul=1, dt=0.2, module_ranges=None, module_thres=[90.0]*9):
+        '''
+        估计不同模块的可用时间
+        '''
+        module_ranges = module_ranges if module_ranges else self.module_ranges
+        # 计算各模块健康度
+        module_soh = np.zeros(9)
+        for i, module in enumerate(module_ranges):
+            if isinstance(module, tuple):
+                # 连续范围
+                indices = list(range(module[0], module[1]))
+            else:
+                # 离散索引
+                indices = module
+            module_soh[i] = np.mean(all_soh[indices])
+        # 记录历史模块健康度
+        if len(self.remembered_module_soh) < window:
+            self.remembered_module_soh.append(module_soh)
+        else:
+            self.remembered_module_soh.pop(0)
+            self.remembered_module_soh.append(module_soh)
+        # 预测每个模块的RUL
+        if len(self.remembered_module_soh) < window:
+            return [np.inf] * len(self.module_ranges)
+
+        rul_list = []
+        soh_matrix = np.array(self.remembered_module_soh[-window:])
+        time_index = np.arange(window)
+        
+        for i in range(soh_matrix.shape[1]):
+            # 如果模块SOH高于阈值，视为长期可用
+            
+            y = soh_matrix[:, i]
+            A = np.vstack([time_index, np.ones(window)]).T
+            slope, intercept = np.linalg.lstsq(A, y, rcond=None)[0]
+            # 趋势预测
+            if y[-1] + slope * window > module_thres[i]:
+                rul_list.append(np.inf)
+                continue
+            
+            # 预测未来低于阈值
+            if slope >= 0:
+                # 防止波动，如果斜率大于0，使用历史rul
+                rul_list.append(self.module_rul[i])
+            else:
+                t_remain = y[-1] / (-slope) * dt
+                rul_list.append(t_remain if t_remain > min_rul else 0)
+            self.write_log(f"斜率:{slope}")
+        # if soh_matrix[-1, 0] <= 80.0:
+        #     print("RUL Predict:", rul_list)
+        #     print("Module SOH:", module_soh, "\n\n")
+        
+        self.module_rul = rul_list
+
+        return rul_list
+
+    def estimate_device_rul(self, module_ruls, module_thres=[80.0]*9):
+        '''
+        计算设备可用时间
+        '''
+        critical_rul = np.inf
+        dependency_rul = 0
+        num_faulty_servos = 0
+        rul_info = "系统长期可用"
+
+        soh_vector = self.remembered_module_soh[-1]
+        for idx, soh in enumerate(soh_vector):
+            name = self.module_index.get(idx + 1)
+            category = self.module_category.get(name)
+            rul = module_ruls[idx]
+            
+            if soh < module_thres[idx]:
+                if category == "关键":
+                    critical_rul = min(critical_rul, rul)
+                elif category == "互补":
+                    num_faulty_servos += 1
+                elif category == "依赖":
+                    weight =  self.dependency_weights[idx + 1]
+                    dependency_rul += weight * rul
+        
+        # 优先级：关键 > 依赖 > 互补  
+        if critical_rul < np.inf:
+            self.rul = critical_rul
+            rul_info = "关键模块失效"
+        elif dependency_rul > 0:
+            self.rul = dependency_rul
+            rul_info = "依赖模块影响"
+        elif num_faulty_servos >= 3:
+            self.rul = min([module_ruls[i] for i in [0, 1, 2, 3]])
+            rul_info = "多个互补模块失效"
+        else:
+            self.rul = np.inf
+        log = f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]}>>{rul_info} RUL:{self.rul:.2f} 健康度:{self.soh:.2f} 阈值:{self.threshold * 100:.2f}\n模块健康度:{self.remembered_module_soh[-1]}'
+        #self.log_info.append(log)
+        #print(log)
+        self.write_log(log)
+        return self.rul, rul_info
+                    
     
     def update_threshold(self, new_features=None, new_soh=None, mean_loss=None, new_threshold=None, update_normal_loss=False):
         """
@@ -187,6 +360,8 @@ class SOHDetector:
         if new_threshold is not None:
             self.threshold = new_threshold
             return
+        if new_soh is None or new_features is None or mean_loss is None:
+            return
         # 计算新的阈值(PID)
         error = 0.01 * (new_soh) * self.threshold_alpha - self.threshold
         pid_output = self.pid_controller(error)
@@ -194,8 +369,6 @@ class SOHDetector:
         #th_limit = self.threshold_alpha
         self.threshold = np.clip(self.threshold + pid_output, 0, 1)
         
-        if new_soh is None or new_features is None or mean_loss is None:
-            return
         # 根据样本重构误差确定是否要保留样本
         z_score = (mean_loss - self.normal_loss[0]) / self.normal_loss[1]
         if np.max(z_score) > 3: # 3 sigma原则，有一个维度异常就不更新
@@ -229,7 +402,7 @@ class SOHDetector:
             outputs = self.soh_predictor(inputs)
             loss = self.loss_fn(outputs, inputs).to('cpu').numpy()
             self.normal_loss = [np.mean(loss, axis=0), np.std(loss, axis=0)]
-        #print(f'🤓Calculating Normal loss: {self.normal_loss}')
+        print(f'🤓Calculating Normal loss: {self.normal_loss}')
 
     def pid_controller(self, error):
         """
@@ -253,7 +426,6 @@ class SOHDetector:
             2: 健康度连续下降
             3: 健康度长期濒临阈值
         '''
-        from datetime import datetime
         # 更新soh列表
         if len(self.remembered_soh) < self.remembered_num:
             self.remembered_soh.append(soh)
@@ -271,12 +443,14 @@ class SOHDetector:
             min_index = self.analyze_anomaly_module(pred_module[0].item())
             if min_index != 'Normal':
                 log = f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]}>>健康度低于阈值! 健康度:{soh:.2f} 阈值:{self.threshold * 100:.2f} 可能故障模块: {min_index}'
-                self.log_info.append(log)
+                #self.log_info.append(log)
+                self.write_log(log)
                 if self.print_log:
                     print(log)
             else:
                 log = f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]}>>健康度低于阈值! 健康度:{soh:.2f} 阈值:{self.threshold * 100:.2f}'
-                self.log_info.append(log)
+                #self.log_info.append(log)
+                self.write_log(log)
                 if self.print_log:
                     print(log)
                     #print(f'Loss: {mean_loss[min_index]}')
@@ -300,35 +474,26 @@ class SOHDetector:
         # ratio = drop_count / len(diffs)
         if self.remembered_soh[-1] + self.remembered_num // 2 * slope < self.threshold * 100:
             log = f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]}>>健康度持续下降! 健康度:{soh:.2f} 阈值:{self.threshold * 100:.2f}'
-            self.log_info.append(log)
+            #self.log_info.append(log)
+            self.write_log(log)
             if self.print_log:
                 print(log)
             return 2
         #### 3. 健康度长期濒临阈值预警
         if all(soh - self.threshold * 100 < 3 for soh in self.remembered_soh):
             log = f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]}>>健康度长期濒临阈值! 健康度:{soh:.2f} 阈值:{self.threshold * 100:.2f}'
-            self.log_info.append(log)
+            #self.log_info.append(log)
+            self.write_log(log)
             if self.print_log:
                 print(log)
             return 3
         return 0
-    def analyze_anomaly_module(self, logit):
+    def analyze_anomaly_module(self, logit, module=None):
         """
         分析异常模块
         """
         # 4个舵机 3个惯组 1个电源 1个北斗
-        module = {
-            0: 'Normal',
-            1: '舵机1',
-            2: '舵机2',
-            3: '舵机3',
-            4: '舵机4',
-            5: '惯组X轴',
-            6: '惯组Y轴',
-            7: '惯组Z轴',
-            8: '电源模块',
-            9: '北斗模块'
-        }
+        module = module if module else self.module_index
         if logit > 0:
             self.count[logit-1] += 1
         return module[logit]
@@ -363,6 +528,16 @@ class SOHDetector:
         else:
             smoothed_soh = soh  # 数据不足时直接使用当前值
         return smoothed_soh
+    
+    def write_log(self, log: str, append=True):
+        self.log_info.append(log)
+        if self.log_path:
+            if append:
+                with open(self.log_path, "a") as f:
+                    f.write(log + "\n")
+            else:
+                with open(self.log_path, "w") as f:
+                    f.write(log + "\n")
 
 
 class SOHPredictor2(nn.Module):
