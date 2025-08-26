@@ -15,12 +15,22 @@ import matplotlib.pyplot as plt
 import copy
 import time
 import json
+import queue
+import threading
+
+def receiver_thread(receiver: RealTimeTransfer, msg_queue: queue.Queue):
+    '''独立线程, 用于接收websocket消息'''
+    while True:
+        if receiver.received:
+            msg_queue.put(receiver.receive_info)
+            receiver.received = False
+        time.sleep(0.01)
 
 def generate_text(model, tokenizer, prompt: str, device="cpu", rag=False, embedding_model=None, cross_encoder=None, chromadb_collection=None):
     '''调用本地大模型生成文本'''
     start_time = time.time()
     if rag:
-        top_k = 3
+        top_k = 7
         retrieved_chunks = retrieve(prompt, top_k, chromadb_collection, embedding_model)
         print("引用的知识库片段:\n", retrieved_chunks)
         reranked_chunks = rerank(prompt, retrieved_chunks, top_k, cross_encoder)
@@ -39,8 +49,9 @@ def generate_text(model, tokenizer, prompt: str, device="cpu", rag=False, embedd
         attention_mask=inputs["attention_mask"],
         max_new_tokens=512,
         do_sample=True,
-        temperature=0.45,
-        top_p=0.9,
+        temperature=0.7,
+        top_p=0.85,
+        top_k=30,
         eos_token_id=tokenizer.eos_token_id,
     )
     gen_ids = outputs[0][inputs["input_ids"].shape[1]:]  # 只拿生成的新token
@@ -271,7 +282,7 @@ if __name__ == '__main__':
     parser.add_argument("--seed", type=int, default=42)  #999
     parser.add_argument("--my_ip", type=str, default="localhost")
     parser.add_argument("--my_port", type=int, default=8765)
-    parser.add_argument("--peer_uri", type=str, default="ws://117.133.23.34:8765")
+    parser.add_argument("--peer_uri", type=str, default="ws://10.63.6.105:8765")
 
     args = parser.parse_args()
 
@@ -287,7 +298,7 @@ if __name__ == '__main__':
     receiver.log_path = "./outputs/log_receiver.txt"
     receiver.write_log("✅ 正在启动新的server(标识ID:LZH-DEBUG)", append=False)
     receiver.run(mode="server")
-    
+    print("Server started!!")
     results_history = {
         "soh": [],
         "threshold": [],
@@ -298,15 +309,21 @@ if __name__ == '__main__':
     }
 
     #receicer.on_receive_callback = lambda info: on_receive(info, results_history, model_dict)
+    # 启动接收线程
+    msg_queue = queue.Queue()
+    receiver_thread = threading.Thread(target=receiver_thread, args=(receiver, msg_queue), daemon=True)
+    receiver_thread.start()
+    # 取队列消息
     last_msg = None
     while True:
-        if receiver.received:
+        try:
+            info = msg_queue.get()
+            #print("DEBUG:", info)
             last_msg = on_receive(info=receiver.receive_info,
                                   results_history=results_history,
                                   model_dict=model_dict,
                                   last_msg=last_msg,
                                   device=model_dict["device"]
                                 )
-            receiver.received = False
-        time.sleep(0.1)
-                
+        except queue.Empty:
+            pass

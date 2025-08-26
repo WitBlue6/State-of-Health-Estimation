@@ -306,9 +306,9 @@ if __name__ == "__main__":
     parser.add_argument("--auto_threshold", type=bool, default=True, help="自适应阈值")
     parser.add_argument("--rag_enable", type=bool, default=True)
     parser.add_argument("--seed", type=int, default=42)  #999
-    parser.add_argument("--my_ip", type=str, default="172.17.1.97")
-    parser.add_argument("--my_port", type=int, default=8765)
-    parser.add_argument("--peer_uri", type=str, default="ws://117.133.23.34:5585/ws/receive")
+    parser.add_argument("--my_ip", type=str, default="10.63.6.105")
+    parser.add_argument("--my_port", type=int, default=8888)
+    parser.add_argument("--peer_uri", type=str, default="ws://localhost:8765")
 
     args = parser.parse_args()
     #model_detect(**vars(args))

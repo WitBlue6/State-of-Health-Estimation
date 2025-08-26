@@ -90,7 +90,7 @@ class RealTimeTransfer():
                 # 正在接收数据
                 if isinstance(data, str):
                     try:
-                        # ######注意⚠️:接收后让处理线程将self.received清空#####
+                        # ######【注意】:接收后让处理线程将self.received清空#####
                         msg = json.loads(data)
                         if msg.get("type") == "text":
                             self.receive_info["data"] = msg["data"]
