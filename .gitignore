@@ -1,4 +1,7 @@
-/soh_classification/.env
+.env
 /soh_classification/dataset
 /olora_finetuning/dataset
 /soh_predictor/dataset
+.DS_Store
+__pycache__
+*.py[cod]
