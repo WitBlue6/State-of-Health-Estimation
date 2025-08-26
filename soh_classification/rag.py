@@ -50,7 +50,7 @@ if __name__ == "__main__":
     cross_encoder = CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1')
 
     print("Chunking...")
-    chunks = split_into_chunks("./dataset/rag_doc.md")
+    chunks = split_into_chunks("./dataset/info.md")
     print("Embedding...")
     embeddings = [embed_chunk(chunk, embedding_model) for chunk in chunks]
     print(len(chunks))

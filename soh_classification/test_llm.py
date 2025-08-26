@@ -20,7 +20,7 @@ def generate_text(model, tokenizer, prompt: str, device="cpu", rag=False, embedd
     '''调用本地大模型生成文本'''
     start_time = time.time()
     if rag:
-        top_k = 3
+        top_k = 5
         retrieved_chunks = retrieve(prompt, top_k, chromadb_collection, embedding_model)
         print("引用的知识库片段:\n", retrieved_chunks)
         reranked_chunks = rerank(prompt, retrieved_chunks, top_k, cross_encoder)
@@ -39,8 +39,9 @@ def generate_text(model, tokenizer, prompt: str, device="cpu", rag=False, embedd
         attention_mask=inputs["attention_mask"],
         max_new_tokens=512,
         do_sample=True,
-        temperature=0.45,
-        top_p=0.9,
+        temperature=0.7,
+        top_p=0.85,
+        top_k=30,
         eos_token_id=tokenizer.eos_token_id,
     )
     gen_ids = outputs[0][inputs["input_ids"].shape[1]:]  # 只拿生成的新token
@@ -49,65 +50,6 @@ def generate_text(model, tokenizer, prompt: str, device="cpu", rag=False, embedd
     print("大模型运行时间:", end_time - start_time)
 
     return generated_text
-
-def realtime_soh_plot(results: dict, max_len: int):
-    '''
-    绘制实时SOH预测值图
-    :param soh_list: 实时SOH预测值列表
-    :param max_len: 绘图最大长度
-    '''
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(results["soh"], label="SOH", color='b')
-    ax.plot([thres * 100 for thres in results["threshold"]], color='black', alpha=0.5, label='Threshold')
-    # 各类预警输出
-    # 故障预警
-    anomaly_flags = [True if warning == 1 else False for warning in results["warning"]]
-    anomaly_indices = [i for i, flag in enumerate(anomaly_flags) if flag]
-    if anomaly_indices:
-        ax.scatter(
-                anomaly_indices, 
-                [results["soh"][i] for i in anomaly_indices],
-                color='red', marker='x', label='Detected Anomalies'
-            )
-    # 下滑预警
-    decrease_flags = [True if warning == 2 else False for warning in results["warning"]]
-    decrease_indices = [i for i, flag in enumerate(decrease_flags) if flag]
-    if decrease_indices:
-        plt.scatter(
-            decrease_indices,
-            [results["soh"][i] for i in decrease_indices],
-            color='orange', marker='^', label='Decrease Warning'
-        )
-    # 长期临界预警
-    critical_flags = [True if warning == 3 else False for warning in results["warning"]]
-    critical_indices = [i for i, flag in enumerate(critical_flags) if flag]
-    if critical_indices:
-        plt.scatter(
-            critical_indices,
-            [results["soh"][i] for i in critical_indices],
-            color='green', marker='*', label='Long-Term Critical Warning'
-        )
-    # 添加SOH与RUL注释
-    if results['soh'] and results['rul']:
-        annotation_text = f"SOH = {results['soh'][-1]:.2f}\nRUL = {results['rul'][-1]:.2f}"
-        ax.text(
-            0.99, 0.01, annotation_text,
-            transform=ax.transAxes,
-            fontsize=12,
-            verticalalignment='bottom',
-            horizontalalignment='right',
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='gray', alpha=0.8)
-        )
-    ax.set_xlim(0, max_len)
-    ax.set_ylim(0, 102)
-    ax.set_title("Real-Time SOH Prediction")
-    ax.set_xlabel("Steps")
-    ax.set_ylabel("SOH Value")
-    ax.grid(True)
-    ax.legend(loc='lower left')
-    plt.tight_layout()
-    plt.savefig('./outputs/soh_prediction.png')
-    plt.close()
 
 def model_initial(
         llm_path,
@@ -205,47 +147,7 @@ def model_initial(
         'chromadb_collection': chromadb_collection
     }
 
-def on_receive(info: dict, results_history: dict, model_dict: dict, last_msg=None, device="cpu") -> dict:
-    text: str = None
-    if info["type"] == "list" and last_msg != info:  # 接收健康度信息
-        for key, value in zip(["soh", "threshold", "warning", "rul", "log"], info["data"]):
-            results_history[key].append(value)
-        # 超出长度
-        if len(results_history["soh"]) > 128:
-            for key in ["soh", "threshold", "warning", "rul", "log"]:
-                results_history[key].pop(0)
-        # 调用绘图
-        print(f"健康度:{results_history['soh'][-1]}")
-        #realtime_soh_plot(results_history, 128)
-    elif info["type"] == "text" and last_msg != info:  # 接收日志信息
-        input = info["data"]
-        results_history["response"].append(input)
-        print(f"接收信息: {input}")
-        # 调用大模型处理
-        text = generate_text(
-            model=model_dict["llm_model"],
-            tokenizer=model_dict["tokenizer"],
-            prompt=input,
-            rag=True,
-            embedding_model=model_dict["embedding_model"],
-            chromadb_collection=model_dict["chromadb_collection"],
-            cross_encoder=model_dict["cross_encoder"],
-            device=device
-        )
-        print(f"大模型输出:\n{text}")
-    # 写json文件
-    receive_info = {
-        "soh": results_history["soh"][-1],
-        "threshold": results_history["threshold"][-1],
-        "warning": results_history["warning"][-1],
-        "rul": results_history["rul"][-1],
-        "log": results_history["log"][-1],
-        "response": text if text else ""
-    }
-    with open('./outputs/results.json', 'a') as f:
-        json.dump(receive_info, f, ensure_ascii=False, indent=4)
 
-    return copy.deepcopy(info)
 
 if __name__ == '__main__':
     import argparse
@@ -277,36 +179,46 @@ if __name__ == '__main__':
 
 
     model_dict = model_initial(**vars(args), enable_llm=True)
-    
-    # 启动Websocket
-    receiver = RealTimeTransfer(
-        my_ip=args.my_ip,
-        my_port=args.my_port,
-        peer_uri=args.peer_uri,
-    )
-    receiver.log_path = "./outputs/log_receiver.txt"
-    receiver.write_log("✅ 正在启动新的server(标识ID:LZH-DEBUG)", append=False)
-    receiver.run(mode="server")
-    
-    results_history = {
-        "soh": [],
-        "threshold": [],
-        "warning": [],
-        "rul": [],
-        "log": [],
-        "response": [],
-    }
 
-    #receicer.on_receive_callback = lambda info: on_receive(info, results_history, model_dict)
-    last_msg = None
-    while True:
-        if receiver.received:
-            last_msg = on_receive(info=receiver.receive_info,
-                                  results_history=results_history,
-                                  model_dict=model_dict,
-                                  last_msg=last_msg,
-                                  device=model_dict["device"]
-                                )
-            receiver.received = False
-        time.sleep(0.1)
+    normal_prompt = """
+    【日志信息为 Python 字典，字段说明如下】：
+            - 健康度持续下降: {'次数': int, '时间范围': str, '健康度范围': str}，表明设备健康度持续降低
+            - 预警_健康度低于阈值: {'次数': int, '时间范围': str, '健康度范围': str, '模块频次': dict}，表明设备存在可能故障模块，并给出模块出现频次
+            - 健康度长期濒临阈值: {'次数': int, '时间范围': str, '健康度范围': str}，表明设备健康度濒临阈值
+            - RUL_关键模块失效: {'次数': int, '时间范围': str, 'RUL范围': str}，表明关键模块失效的次数及剩余寿命范围
+            - RUL_依赖模块失效: {'次数': int, '时间范围': str, 'RUL范围': str}，表明依赖模块失效相关信息
+            - RUL_互补模块失效: {'次数': int, '时间范围': str, 'RUL范围': str}，表明互补模块失效相关信息
+
+            压缩日志信息如下：
+            {'系统长期可用': {'次数': 127, '时间范围': '2025-08-13 12:37:02.880 ~ 2025-08-13 12:37:42.379', '健康度范围': '91.52 ~ 97.40'}}
+    """
+
+    abnormal_prompt = """
+    【日志信息为 Python 字典，字段说明如下】：
+            - 健康度持续下降: {'次数': int, '时间范围': str, '健康度范围': str}，表明设备健康度持续降低
+            - 预警_健康度低于阈值: {'次数': int, '时间范围': str, '健康度范围': str, '模块频次': dict}，表明设备存在可能故障模块，并给出模块出现频次
+            - 健康度长期濒临阈值: {'次数': int, '时间范围': str, '健康度范围': str}，表明设备健康度濒临阈值
+            - RUL_关键模块失效: {'次数': int, '时间范围': str, 'RUL范围': str}，表明关键模块失效的次数及剩余寿命范围
+            - RUL_依赖模块失效: {'次数': int, '时间范围': str, 'RUL范围': str}，表明依赖模块失效相关信息
+            - RUL_互补模块失效: {'次数': int, '时间范围': str, 'RUL范围': str}，表明互补模块失效相关信息
+
+            压缩日志信息如下：
+            {'系统长期可用': {'次数': 98, '时间范围': '2025-08-13 12:37:42.750 ~ 2025-08-13 12:38:13.683', '健康度范围': '97.03 ~ 97.61'}, 'RUL_关键模块失效': {'次数': 17, '时间范围': '2025-08-13 12:38:13.992 ~ 2025-08-13 12:38:19.355', 'RUL范围': '29.17 ~ 15316.48'}, '预警_健康度低于阈值': {'次数': 13, '时间范围': '2025-08-13 12:38:15.340 ~ 2025-08-13 12:38:19.363', '健康度范围': '75.35 ~ 90.81'}}
+    """
+
+    input_prompt = abnormal_prompt
+    
+    print(f"接收信息: {input_prompt}")
+    # 调用大模型处理
+    text = generate_text(
+        model=model_dict["llm_model"],
+        tokenizer=model_dict["tokenizer"],
+        prompt=input_prompt,
+        rag=True,
+        embedding_model=model_dict["embedding_model"],
+        chromadb_collection=model_dict["chromadb_collection"],
+        cross_encoder=model_dict["cross_encoder"],
+        device=model_dict["device"]
+    )
+    print(f"大模型输出:\n{text}")
                 

@@ -15,7 +15,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 
+def send_message(transfer: RealTimeTransfer, message: str):
+    transfer.frame = message
+    transfer.send = True
+    while transfer.send:  # 等待发送完成
+        time.sleep(0.01)
 
+def send_soh(transfer: RealTimeTransfer, message: list):
+    transfer.list_data = message
+    transfer.send = True    
+    while transfer.send:  # 等待发送完成
+        time.sleep(0.01)
 
 def data_process(data_path):
     """
@@ -136,14 +146,8 @@ def model_initial(
         print("⚠️ Using CPU (no MPS or CUDA found)")
     dtype = torch.float32  # 使用一致的数据类型
 
-    soh_detector = None
-    tokenizer = None
-    llm_model = None
-    embedding_model = None
-    chromadb_collection = None
-    cross_encoder = None
-
     if enable_llm:
+        soh_detector = None
         # 加载大模型
         torch.cuda.empty_cache()
         print(f"Loading LLM from {llm_path}...")
@@ -160,6 +164,11 @@ def model_initial(
             print(f"Loading Cross-Encoder from {cross_encoder}")
             cross_encoder = CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1')
     else:
+        tokenizer = None
+        llm_model = None
+        embedding_model = None
+        chromadb_collection = None
+        cross_encoder = None
         # 加载SOH模型权重
         print('Loading SOH Model...')
         checkpoint = torch.load(soh_path, map_location=device)
@@ -228,12 +237,12 @@ class RealTimeSOHPredicter:
         
         # 构造滑动窗口
         batch_features = np.vstack(self.history_window)
-        soh, thres, warning, rul, rul_info = self.soh_detector.detect_soh(batch_features)
+        soh, thres, warning, rul, rul_log, warning_log = self.soh_detector.detect_soh(batch_features)
         self.results["soh"].append(soh)
         self.results["threshold"].append(thres)
         self.results["warning"].append(warning)
         self.results["rul"].append(rul)
-        self.results["rul_info"].append(rul_info)
+        self.results["rul_info"].append(rul_log)
         if len(self.results["soh"]) > self.remembered_max_result:
             self.results["soh"].pop(0)
             self.results["threshold"].pop(0)
@@ -241,14 +250,14 @@ class RealTimeSOHPredicter:
             self.results["rul"].pop(0)
             self.results["rul_info"].pop(0)
 
-        print(self.soh_detector.log_info[-1])
+        #print(self.soh_detector.log_info[-1])
         
         return {
             'soh': soh,
             'threshold': thres,
             'warning': warning,
             'rul': rul,
-            'rul_info': rul_info
+            'log': rul_log + "\n" + warning_log
         }
         
 class RealTimeDataReader:
@@ -297,9 +306,9 @@ if __name__ == "__main__":
     parser.add_argument("--auto_threshold", type=bool, default=True, help="自适应阈值")
     parser.add_argument("--rag_enable", type=bool, default=True)
     parser.add_argument("--seed", type=int, default=42)  #999
-    parser.add_argument("--my_ip", type=str, default="172.20.10.12")
+    parser.add_argument("--my_ip", type=str, default="172.17.1.97")
     parser.add_argument("--my_port", type=int, default=8765)
-    parser.add_argument("--peer_uri", type=str, default="ws://10.0.3.248:8765")
+    parser.add_argument("--peer_uri", type=str, default="ws://117.133.23.34:5585/ws/receive")
 
     args = parser.parse_args()
     #model_detect(**vars(args))
@@ -334,28 +343,34 @@ if __name__ == "__main__":
         my_port=args.my_port,
         peer_uri=args.peer_uri
     )
-    #transfer.run()
-    send_cnt = 0
+    transfer.log_path = "./outputs/log_transfer.txt"
+    transfer.write_log("✅ 正在启动新的client(标识ID:LZH-DEBUG)", append=False)
+    transfer.run(mode="client")
+    send_cnt = 128
     
     # 清空日志内容
     soh_predicter.soh_detector.write_log("BEGIN", append=False)
-
+    while transfer._running == False:
+        time.sleep(1)
+        print("等待连接...")
     # 循环读取数据
+    print("连接成功, 模型开始运行...")
     while row_data := data_reader.read_next():
         row_feature = np.array(list(row_data.values()))
         result_dict = soh_predicter.add_sample(row_feature)
         realtime_soh_plot(soh_predicter.results, soh_predicter.remembered_max_result)
-        time.sleep(0.2)
-        # # 与服务器数据传输
-        # send_cnt += 1
-        # if send_cnt == 128:
-        #     # 将压缩日志发送给服务器端
-        #     prompt = compress_logs(soh_predicter.soh_detector.log_info)
-        #     transfer.frame = prompt
-        #     transfer.send = True
-        #     while transfer.send:
-        #         time.sleep(0.5)
 
+        # 发送健康度和阈值给服务器保存
+        if result_dict is not None:
+            soh_buffer = [float(result_dict["soh"]), float(result_dict["threshold"]), result_dict["warning"], float(result_dict["rul"]), result_dict["log"]]
+            send_soh(transfer, soh_buffer)
+        # 发送压缩日志信息给服务器大模型推理
+        if len(soh_predicter.soh_detector.log_info) % send_cnt == 0 and len(soh_predicter.soh_detector.log_info) > 0:
+            # 将压缩日志发送给服务器端
+            prompt = compress_logs_for_model(soh_predicter.soh_detector.log_info[-send_cnt:])
+            send_message(transfer, prompt)
+            
+        time.sleep(0.2)
     
     
     

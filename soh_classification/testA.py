@@ -6,6 +6,16 @@ import websockets
 def send_message(transfer: RealTimeTransfer, message: str):
     transfer.frame = message
     transfer.send = True
+    while transfer.send:  # 等待发送完成
+        time.sleep(0.01)
+
+
+def send_soh(transfer: RealTimeTransfer, message: list):
+    transfer.list_data = message
+    transfer.send = True    
+    while transfer.send:  # 等待发送完成
+        time.sleep(0.01)
+
 
 async def test_websocket_connection(uri):
     try:
@@ -22,15 +32,23 @@ async def test_websocket_connection(uri):
 
 if __name__ == "__main__":
 
-    transfer = RealTimeTransfer(
-        my_ip="192.168.10.206",
+    transfer: RealTimeTransfer = RealTimeTransfer(
+        my_ip="192.168.10.205",
         my_port=8765,
         peer_uri="ws://192.168.10.199:8765"
     )
-    transfer.run()
-    cnt = 1
+    transfer.run(mode="client")
+    cnt: int = 1
+    soh: int = 89.23
+    thres: int = 87.22
     while True:
         if transfer._running:
             send_message(transfer, message=f"Hello LZH {cnt}")
             cnt += 1
             time.sleep(1)
+            send_soh(transfer, message=[soh, thres])
+            soh -= 1
+            thres -= 1
+            time.sleep(1)
+
+            

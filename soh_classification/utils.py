@@ -6,6 +6,7 @@ import pandas as pd
 import os
 import joblib
 from datetime import datetime
+from sklearn.linear_model import LinearRegression
 import copy
 
 class AnomalyProcessor:
@@ -152,6 +153,8 @@ class SOHDetector:
         self.module_rul = [np.inf] * len(self.module_ranges)
         self.rul = np.inf
         self.soh = 100.0
+        self.slope_history = []
+        self.slope_remember_num = 12
         # 结构配置
         self.module_category = {
             "舵机1": "互补",
@@ -240,19 +243,19 @@ class SOHDetector:
             self.soh = mean_soh
             # 根据每个模块的健康度，计算设备可用时间
             module_rul = self.estimate_module_rul(soh)
-            rul, rul_info = self.estimate_device_rul(module_rul)
+            rul, rul_log = self.estimate_device_rul(module_rul)
 
             # 如果只计算结果用于其他方法，不输出
             if output == False:
                 return mean_soh, self.threshold, soh
             
             # 输出预警信息
-            warning_type = self.warning(mean_soh, data_soh, data_cls, key_map=key_map)
+            warning_type, warning_log = self.warning(mean_soh, data_soh, data_cls, key_map=key_map)
 
             # 更新阈值
             if self.auto_threshold:
                 self.update_threshold(features, mean_soh, mean_loss)
-        return mean_soh, self.threshold, warning_type, rul, rul_info
+        return mean_soh, self.threshold, warning_type, rul, rul_log, warning_log
 
     def estimate_module_rul(self, all_soh, window=128, min_rul=1, dt=0.2, module_ranges=None, module_thres=[90.0]*9):
         '''
@@ -281,31 +284,46 @@ class SOHDetector:
 
         rul_list = []
         soh_matrix = np.array(self.remembered_module_soh[-window:])
-        time_index = np.arange(window)
-        
+        time_index = np.arange(window) * dt
+
+        # 生成权重：时间越近，权重越大
+        weights = np.exp(np.linspace(-2, 0, window)) 
+        #W = np.diag(weights)
+        A = np.vstack([time_index, np.ones(window)]).T
+        model = LinearRegression()
+
         for i in range(soh_matrix.shape[1]):
-            # 如果模块SOH高于阈值，视为长期可用
-            
+            # 加权线性拟合
             y = soh_matrix[:, i]
-            A = np.vstack([time_index, np.ones(window)]).T
-            slope, intercept = np.linalg.lstsq(A, y, rcond=None)[0]
-            # 趋势预测
-            if y[-1] + slope * window > module_thres[i]:
+        
+            model.fit(A, y, sample_weight=weights)
+            slope = model.coef_[0]
+            # 储存历史slope
+            if len(self.slope_history) < self.slope_remember_num:
+                self.slope_history.append(slope)
+            else:
+                self.slope_history.pop(0)
+                self.slope_history.append(slope)
+            slope_smooth = np.mean(self.slope_history)
+            # # 如果模块SOH高于阈值，视为长期可用
+            if y[-1] + slope_smooth * window > module_thres[i]:
                 rul_list.append(np.inf)
                 continue
             
             # 预测未来低于阈值
-            if slope >= 0:
+            if slope_smooth >= 0:
                 # 防止波动，如果斜率大于0，使用历史rul
-                rul_list.append(self.module_rul[i])
+                rul_list.append(self.module_rul[i] * 0.95)
             else:
-                t_remain = y[-1] / (-slope) * dt
+                t_remain = y[-1] / (-slope_smooth) * 2
                 rul_list.append(t_remain if t_remain > min_rul else 0)
-            self.write_log(f"斜率:{slope}")
-        # if soh_matrix[-1, 0] <= 80.0:
-        #     print("RUL Predict:", rul_list)
-        #     print("Module SOH:", module_soh, "\n\n")
-        
+            #self.write_log(f"模块:{self.module_index.get(i+1)} 斜率:{slope_smooth}  RUL:{rul_list[-1]}")
+
+        # 对RUL结果平滑处理
+        for i in range(len(rul_list)):
+            if rul_list[i] != np.inf and self.module_rul[i] != np.inf:
+                rul_list[i] = rul_list[i] * 0.65 + self.module_rul[i] * 0.35
+
         self.module_rul = rul_list
 
         return rul_list
@@ -346,11 +364,10 @@ class SOHDetector:
             rul_info = "多个互补模块失效"
         else:
             self.rul = np.inf
-        log = f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]}>>{rul_info} RUL:{self.rul:.2f} 健康度:{self.soh:.2f} 阈值:{self.threshold * 100:.2f}\n模块健康度:{self.remembered_module_soh[-1]}'
+        log = f'\n{datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]}>>{rul_info} RUL:{self.rul:.2f} 健康度:{self.soh:.2f} 阈值:{self.threshold * 100:.2f}'
         #self.log_info.append(log)
-        #print(log)
         self.write_log(log)
-        return self.rul, rul_info
+        return self.rul, log
                     
     
     def update_threshold(self, new_features=None, new_soh=None, mean_loss=None, new_threshold=None, update_normal_loss=False):
@@ -445,20 +462,17 @@ class SOHDetector:
                 log = f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]}>>健康度低于阈值! 健康度:{soh:.2f} 阈值:{self.threshold * 100:.2f} 可能故障模块: {min_index}'
                 #self.log_info.append(log)
                 self.write_log(log)
-                if self.print_log:
-                    print(log)
+                
             else:
                 log = f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]}>>健康度低于阈值! 健康度:{soh:.2f} 阈值:{self.threshold * 100:.2f}'
                 #self.log_info.append(log)
                 self.write_log(log)
-                if self.print_log:
-                    print(log)
-                    #print(f'Loss: {mean_loss[min_index]}')
-            return 1
+                
+            return 1, log
         
         # 如果没有足够的样本，不进行其他预警
         if len(self.remembered_soh) < self.remembered_num:
-            return 0
+            return 0, ""
         
         #### 2. 健康度连续下降预警
         # 用一阶线性回归判断
@@ -476,18 +490,14 @@ class SOHDetector:
             log = f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]}>>健康度持续下降! 健康度:{soh:.2f} 阈值:{self.threshold * 100:.2f}'
             #self.log_info.append(log)
             self.write_log(log)
-            if self.print_log:
-                print(log)
-            return 2
+            return 2, log
         #### 3. 健康度长期濒临阈值预警
         if all(soh - self.threshold * 100 < 3 for soh in self.remembered_soh):
             log = f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]}>>健康度长期濒临阈值! 健康度:{soh:.2f} 阈值:{self.threshold * 100:.2f}'
             #self.log_info.append(log)
             self.write_log(log)
-            if self.print_log:
-                print(log)
-            return 3
-        return 0
+            return 3, log
+        return 0, ""
     def analyze_anomaly_module(self, logit, module=None):
         """
         分析异常模块
@@ -531,6 +541,7 @@ class SOHDetector:
     
     def write_log(self, log: str, append=True):
         self.log_info.append(log)
+        print(log)
         if self.log_path:
             if append:
                 with open(self.log_path, "a") as f:
@@ -538,40 +549,6 @@ class SOHDetector:
             else:
                 with open(self.log_path, "w") as f:
                     f.write(log + "\n")
-
-
-class SOHPredictor2(nn.Module):
-    def __init__(self, input_dim):
-        super(SOHPredictor, self).__init__()
-        # 编码器部分
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, 512),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-        )
-        self.self_attn = nn.MultiheadAttention(embed_dim=128, num_heads=4, dropout=0.3, batch_first=True)
-        self.attn_layer_norm = nn.LayerNorm(128)
-        # 解码器部分，用于重构输入
-        self.decoder = nn.Sequential(
-            nn.Linear(128, 256),
-            nn.ReLU(),
-            nn.Linear(256, 512),
-            nn.ReLU(),
-            nn.Linear(512, input_dim)
-        )
-        # 残差链接
-        self.skip = nn.Linear(input_dim, input_dim)
-
-    def forward(self, x):
-        encoded = self.encoder(x)
-        # 自注意力 (添加残差连接和LayerNorm)
-        attn_output, _ = self.self_attn(encoded, encoded, encoded)
-        encoded = self.attn_layer_norm(encoded + attn_output)
-        decoded = self.decoder(encoded)
-        return decoded + self.skip(x)  # 残差连接
 
 class SOHPredictor(nn.Module):
     def __init__(self, input_dim):
@@ -612,20 +589,6 @@ class SOHPredictor(nn.Module):
         encoded = self.encoder(x)
         decoded = self.decoder(encoded)
         return decoded + self.skip(x)  # 残差连接
-
-class CustomLoss(nn.Module):
-    def __init__(self, alpha=0.5):
-        super().__init__()
-        self.alpha = alpha  # 控制特征间平衡的权重
-        
-    def forward(self, outputs, inputs):
-        # 基础MSE损失
-        mse_loss = torch.abs(torch.mean((outputs - inputs)**2, dim=0))  # 按特征计算
-        
-        # 添加特征间平衡项：最小化各特征损失的标准差
-        std_loss = torch.std(mse_loss)
-        total_loss = torch.mean(mse_loss) + self.alpha * std_loss
-        return total_loss
 
 class ModuleAwareLoss(nn.Module):
     def __init__(self, device, alpha=0.5, module_ranges=None):
@@ -969,6 +932,146 @@ def compress_logs(logs: list[str]) -> dict:
     {result}
     """
     return prompt
+
+def compress_logs_for_model(logs: list[str]) -> dict:
+    """
+    根据日志结构，压缩日志为结构化摘要
+    """
+    import re
+    from collections import defaultdict
+    from datetime import datetime
+    # 用来存放各种统计数据
+    summary = {
+        "系统长期可用": {"count": 0, "times": [], "soh_values": []},
+        "RUL_关键模块失效": {"count": 0, "times": [], "RUL_values": []},
+        "RUL_依赖模块失效": {"count": 0, "times": [], "RUL_values": []},
+        "RUL_互补模块失效": {"count": 0, "times": [], "RUL_values": []},
+        "预警_健康度持续下降": {"count": 0, "times": [], "soh_values": []},
+        "预警_健康度低于阈值": {"count": 0, "times": [], "soh_values": [], "modules": defaultdict(int)},
+        "预警_健康度长期濒临阈值": {"count": 0, "times": [], "soh_values": []},
+    }
+    for line in logs:
+        line = line.strip()
+        # 时间戳格式提取，假设格式固定，类似：2025-07-27 11:04:46.803>>
+        time_match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})>>", line)
+        time_str = time_match.group(1) if time_match else None
+
+        # 统一提取健康度和阈值
+        soh_match = re.search(r"健康度:([0-9.]+)", line)
+        thres_match = re.search(r"阈值:([0-9.]+)", line)
+        rul_match = re.search(r"RUL:(inf|[0-9.]+)", line)
+
+        # 解析模块名（预警低于阈值时可能出现）
+        module_match = re.search(r"模块(?:名称)?[:：]?\s*([\w\-]+)", line)
+        # 有些日志没模块名，这里匹配模块名字留给后续统计
+
+        # 分类判断
+        if "系统长期可用" in line:
+            summary["系统长期可用"]["count"] += 1
+            if time_str:
+                summary["系统长期可用"]["times"].append(time_str)
+            if soh_match:
+                summary["系统长期可用"]["soh_values"].append(float(soh_match.group(1)))
+
+        elif "关键模块失效" in line:
+            summary["RUL_关键模块失效"]["count"] += 1
+            if time_str:
+                summary["RUL_关键模块失效"]["times"].append(time_str)
+            if rul_match:
+                val = float('inf') if rul_match.group(1) == "inf" else float(rul_match.group(1))
+                summary["RUL_关键模块失效"]["RUL_values"].append(val)
+
+        elif "依赖模块失效" in line:
+            summary["RUL_依赖模块失效"]["count"] += 1
+            if time_str:
+                summary["RUL_依赖模块失效"]["times"].append(time_str)
+            if rul_match:
+                val = float('inf') if rul_match.group(1) == "inf" else float(rul_match.group(1))
+                summary["RUL_依赖模块失效"]["RUL_values"].append(val)
+
+        elif "互补模块失效" in line:
+            summary["RUL_互补模块失效"]["count"] += 1
+            if time_str:
+                summary["RUL_互补模块失效"]["times"].append(time_str)
+            if rul_match:
+                val = float('inf') if rul_match.group(1) == "inf" else float(rul_match.group(1))
+                summary["RUL_互补模块失效"]["RUL_values"].append(val)
+
+        elif "健康度持续下降" in line:
+            summary["预警_健康度持续下降"]["count"] += 1
+            if time_str:
+                summary["预警_健康度持续下降"]["times"].append(time_str)
+            if soh_match:
+                summary["预警_健康度持续下降"]["soh_values"].append(float(soh_match.group(1)))
+
+        elif "健康度低于阈值" in line:
+            summary["预警_健康度低于阈值"]["count"] += 1
+            if time_str:
+                summary["预警_健康度低于阈值"]["times"].append(time_str)
+            if soh_match:
+                summary["预警_健康度低于阈值"]["soh_values"].append(float(soh_match.group(1)))
+            # 如果模块名出现，统计模块频次
+            if module_match:
+                summary["预警_健康度低于阈值"]["modules"][module_match.group(1)] += 1
+
+        elif "健康度长期濒临阈值" in line:
+            summary["预警_健康度长期濒临阈值"]["count"] += 1
+            if time_str:
+                summary["预警_健康度长期濒临阈值"]["times"].append(time_str)
+            if soh_match:
+                summary["预警_健康度长期濒临阈值"]["soh_values"].append(float(soh_match.group(1)))
+
+    # 格式化结果看时间范围和数值范围
+    def summarize_section(data: dict):
+        if data["count"] == 0:
+            return None
+        times = data["times"]
+        soh_vals = data.get("soh_values", [])
+        rul_vals = data.get("RUL_values", [])
+
+        result = {
+            "次数": data["count"],
+            "时间范围": f"{min(times)} ~ {max(times)}" if times else "无记录"
+        }
+        if soh_vals:
+            result["健康度范围"] = f"{min(soh_vals):.2f} ~ {max(soh_vals):.2f}"
+        if rul_vals:
+            # 特殊处理inf
+            finite_ruls = [v for v in rul_vals if v != float('inf')]
+            if len(finite_ruls) == 0:
+                result["RUL范围"] = "inf"
+            else:
+                result["RUL范围"] = f"{min(finite_ruls):.2f} ~ {max(finite_ruls):.2f}"
+
+        # 如果有模块频次，排序后加入
+        if "modules" in data and data["modules"]:
+            sorted_modules = dict(sorted(data["modules"].items(), key=lambda x: -x[1]))
+            result["模块频次"] = sorted_modules
+        return result
+    def build_prompts_from_summary(result: dict) -> str:
+        prompt = f"""
+        【日志信息为 Python 字典，字段说明如下】：
+        - 健康度持续下降: {{'次数': int, '时间范围': str, '健康度范围': str}}，表明设备健康度持续降低
+        - 预警_健康度低于阈值: {{'次数': int, '时间范围': str, '健康度范围': str, '模块频次': dict}}，表明设备存在可能故障模块，并给出模块出现频次
+        - 健康度长期濒临阈值: {{'次数': int, '时间范围': str, '健康度范围': str}}，表明设备健康度濒临阈值
+        - RUL_关键模块失效: {{'次数': int, '时间范围': str, 'RUL范围': str}}，表明关键模块失效的次数及剩余寿命范围
+        - RUL_依赖模块失效: {{'次数': int, '时间范围': str, 'RUL范围': str}}，表明依赖模块失效相关信息
+        - RUL_互补模块失效: {{'次数': int, '时间范围': str, 'RUL范围': str}}，表明互补模块失效相关信息
+
+        压缩日志信息如下：
+        {result}
+        """
+        return prompt
+
+    output = {}
+    for key, val in summary.items():
+        res = summarize_section(val)
+        if res:
+            output[key] = res
+    # 监测是否为空
+    if not output:
+        output = {"无记录": {"次数": 0, "时间范围": "无记录"}}
+    return build_prompts_from_summary(output)
 
 
 import openai
