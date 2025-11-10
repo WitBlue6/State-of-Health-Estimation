@@ -861,6 +861,82 @@ def load_data(data_path, add_noise=False, preprocess=True):
     data_list = noise_adder(data, add_noise=add_noise)
     return data_list
 
+def compress_logs(logs: list[str]) -> dict:
+    """
+    将列表转化为大模型输入的prompt
+    """
+    from datetime import datetime
+    from collections import defaultdict
+    import re
+    def parse_log_time(log_str: str):
+        # 从日志中提取时间戳字符串并转为 datetime
+        time_str = log_str.split('>', 1)[0]
+        return time_str
+    
+    summary = {
+        "健康度持续下降": {
+            "count": 0, "times": [], "soh_values": []
+        },
+        "健康度低于阈值": {
+            "count": 0, "times": [], "soh_values": [], "modules": defaultdict(int)
+        },
+        "健康度濒临阈值": {
+            "count": 0, "times": [], "soh_values": []
+        }
+    }
+    for log in logs:
+        if "健康度持续下降" in log:
+            summary["健康度持续下降"]["count"] += 1
+            summary["健康度持续下降"]["times"].append(parse_log_time(log))
+            soh_match = re.search(r'健康度:(\d+\.?\d*)', log)
+            if soh_match:
+                summary["健康度持续下降"]["soh_values"].append(float(soh_match.group(1)))
+
+        elif "健康度低于阈值" in log:
+            summary["健康度低于阈值"]["count"] += 1
+            summary["健康度低于阈值"]["times"].append(parse_log_time(log))
+            soh_match = re.search(r'健康度:(\d+\.?\d*)', log)
+            if soh_match:
+                summary["健康度低于阈值"]["soh_values"].append(float(soh_match.group(1)))
+            module_match = re.search(r'可能故障模块:\s*(\S+)', log)
+            if module_match:
+                module = module_match.group(1)
+                summary["健康度低于阈值"]["modules"][module] += 1
+
+        elif "健康度长期濒临阈值" in log:
+            summary["健康度濒临阈值"]["count"] += 1
+            summary["健康度濒临阈值"]["times"].append(parse_log_time(log))
+            soh_match = re.search(r'健康度:(\d+\.?\d*)', log)
+            if soh_match:
+                summary["健康度濒临阈值"]["soh_values"].append(float(soh_match.group(1)))
+
+    # 精炼输出格式
+    result = {}
+    for key, value in summary.items():
+        if value["count"] == 0:
+            continue
+
+        times = value["times"]
+        result[key] = {
+            "次数": value["count"],
+            "时间范围": f"{min(times)} ~ {max(times)}" if times else "无记录",
+            "SOH范围": f"{min(value['soh_values']):.2f} ~ {max(value['soh_values']):.2f}" if value["soh_values"] else "未知",
+        }
+
+        if "modules" in value:
+            result[key]["模块频次"] = dict(sorted(value["modules"].items(), key=lambda x: -x[1]))
+    #print(summary)
+    print(result)
+    prompt = f"""
+    【日志信息为 Python 字典，字段说明如下】：
+    - 健康度持续下降: {{'次数': int, '时间范围': str, 'SOH范围': str}}，表明设备健康度持续降低
+    - 健康度低于阈值: {{'次数': int, '时间范围': str, 'SOH范围': str, '模块频次': dict}}，表明设备存在可能故障模块，并给出模块出现频次
+    - 健康度濒临阈值: {{'次数': int, '时间范围': str, 'SOH范围': str}}，表明设备健康度濒临阈值
+    压缩日志信息如下：  
+    {result}
+    """
+    return prompt
+
 def compress_logs_for_model(logs: list[str]) -> dict:
     """
     根据日志结构，压缩日志为结构化摘要
@@ -1000,3 +1076,34 @@ def compress_logs_for_model(logs: list[str]) -> dict:
     if not output:
         output = {"无记录": {"次数": 0, "时间范围": "无记录"}}
     return build_prompts_from_summary(output)
+
+
+import openai
+from dotenv import load_dotenv
+
+def LLM_answer(message, api_key=None, base_url=None, model='gpt'):
+    '''
+    调用大模型回答问题
+    '''
+    load_dotenv('.env')
+    if model == 'gpt':
+        if api_key is None:
+            api_key = os.getenv('GPT_API_KEY')
+            base_url = os.getenv('GPT_BASE_URL')
+        client = openai.OpenAI(
+            api_key=api_key,
+            base_url=base_url
+        )
+        system_content = "你是一个电子设备日志分析专家，请根据日志信息，给出摘要和建议操作"
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": message},
+            ]
+        )
+        #print(response)
+        content = response.choices[0].message.content
+        if content is None:
+            print(response.choices[0])
+    return content

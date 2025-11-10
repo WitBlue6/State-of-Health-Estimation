@@ -17,7 +17,7 @@ def send_soh(transfer: RealTimeTransfer, message: list):
 transfer = RealTimeTransfer(
         my_ip="172.17.1.97",
         my_port=8765,
-        peer_uri="ws://localhost:3016/ws/receive"
+        peer_uri="ws://192.168.2.9:3016/ws/receive"
     )
 transfer.log_path = "./outputs/log_ws_debug.txt"
 transfer.write_log("正在启动新的client(标识ID:LZH-DEBUG)", append=False)
@@ -49,4 +49,4 @@ while True:
     soh_buffer = [float(soh), float(threshold), warning, float(rul), log]
     send_soh(transfer, soh_buffer)
     time.sleep(3)
-    print("Send")
+    print("send")

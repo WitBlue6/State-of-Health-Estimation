@@ -10,22 +10,76 @@ from model import load_data, Standardization, set_random_seed
 from utils import *
 from websocket_transfer import RealTimeTransfer
 from rag import retrieve, rerank
+from typing import Union
 
 import numpy as np
 import matplotlib.pyplot as plt
 import time
+import json
+import queue
+import threading
+import copy
 
-def send_message(transfer: RealTimeTransfer, message: str):
-    transfer.frame = message
-    transfer.send = True
-    while transfer.send:  # 等待发送完成
-        time.sleep(0.01)
+# 定义全局发送队列
+send_queue = queue.Queue()
+# 添加大模型处理队列
+model_queue = queue.Queue()
 
-def send_soh(transfer: RealTimeTransfer, message: list):
-    transfer.list_data = message
-    transfer.send = True    
-    while transfer.send:  # 等待发送完成
-        time.sleep(0.01)
+def model_worker():
+    """独立线程：专门处理大模型请求"""
+    while True:
+        try:
+            # 从队列获取请求
+            prompt, transfer, model_dict, results_history = model_queue.get(timeout=0.1)
+            
+            # 处理大模型请求（这会阻塞，但只在独立线程中）
+            text = generate_text(
+                model=model_dict["llm_model"],
+                tokenizer=model_dict["tokenizer"],
+                prompt=prompt,
+                rag=True,
+                embedding_model=model_dict["embedding_model"],
+                chromadb_collection=model_dict["chromadb_collection"],
+                cross_encoder=model_dict["cross_encoder"],
+                device=model_dict["device"]
+            )
+            results_history["response"].append(text)
+            print(f"大模型输出:\n{text}")
+            
+            # 发送大模型响应
+            send_message_async(text)
+            
+        except queue.Empty:
+            continue
+        except Exception as e:
+            print(f"Model worker error: {e}")
+
+def sender_thread(transfer: RealTimeTransfer, send_queue: queue.Queue):
+    """独立线程：负责发送 websocket 消息"""
+    while True:
+        try:
+            msg_type, msg_data = send_queue.get(timeout=0.1)
+            if msg_type == "text":
+                transfer.frame = msg_data
+            elif msg_type == "list":
+                transfer.list_data = msg_data
+            print("已发送:", msg_data)
+            transfer.send = True
+            # 非阻塞等待，避免卡死
+            while transfer.send:
+                time.sleep(0.01)
+        except queue.Empty:
+            continue
+
+
+def send_message_async(message: str):
+    """放入队列，异步发送 text 消息"""
+    send_queue.put(("text", message))
+
+
+def send_soh_async(message: list):
+    """放入队列，异步发送 list 数据"""
+    send_queue.put(("list", message))
 
 def data_process(data_path):
     """
@@ -108,104 +162,6 @@ def realtime_soh_plot(results: dict, max_len: int):
     plt.savefig('./outputs/soh_prediction.png')
     plt.close()
 
-def model_initial(
-        llm_path,
-        embedding_model,
-        cross_encoder,
-        chromadb_path,
-        soh_path, 
-        cls_path,
-        normal_features,
-        threshold=0.05, 
-        num_modules=10,
-        normalize=True,
-        output_path=None,
-        filter=True,
-        auto_threshold=False,
-        rag_enable=False,
-        seed=42,
-        enable_llm=False,
-        *args,
-        **kwargs
-):
-    """
-    加载模型，返回各模型对象
-    """
-    if seed is not None:
-        set_random_seed(seed)
-   
-    # Get device
-    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-        device = torch.device("mps")
-        print("✅ Using MPS (Apple Silicon)")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"✅ Using CUDA (GPU {torch.cuda.get_device_name(0)})")
-    else:
-        device = torch.device("cpu")
-        print("⚠️ Using CPU (no MPS or CUDA found)")
-    dtype = torch.float32  # 使用一致的数据类型
-
-    if enable_llm:
-        soh_detector = None
-        # 加载大模型
-        torch.cuda.empty_cache()
-        print(f"Loading LLM from {llm_path}...")
-        tokenizer = AutoTokenizer.from_pretrained(llm_path, trust_remote_code=True)
-        llm_model = AutoModelForCausalLM.from_pretrained(llm_path, trust_remote_code=True).to(device)
-        
-        # 加载RAG模型
-        if rag_enable:
-            print(f"Loading Embedding Model from {embedding_model}")
-            embedding_model = SentenceTransformer(embedding_model)
-            print(f"Loading Chromadb Collection from {chromadb_path}")
-            chromadb_client = chromadb.PersistentClient(chromadb_path)
-            chromadb_collection = chromadb_client.get_or_create_collection(name="default")
-            print(f"Loading Cross-Encoder from {cross_encoder}")
-            cross_encoder = CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1')
-    else:
-        tokenizer = None
-        llm_model = None
-        embedding_model = None
-        chromadb_collection = None
-        cross_encoder = None
-        # 加载SOH模型权重
-        print('Loading SOH Model...')
-        checkpoint = torch.load(soh_path, map_location=device)
-        soh_predictor = SOHPredictor(input_dim=normal_features.shape[1]).to(device)
-        soh_predictor.load_state_dict(checkpoint)
-
-        checkpoint = torch.load(cls_path, map_location=device)
-        cls_model = ClassificationModel(input_dim=normal_features.shape[1], num_modules=num_modules).to(device)
-        cls_model.load_state_dict(checkpoint)
-        
-        print(f"✅Loading Model Finished!")
-
-        soh_detector = SOHDetector(
-                soh_predictor, 
-                cls_model, 
-                normal_features, 
-                device, 
-                threshold=threshold, 
-                auto_threshold=auto_threshold, 
-                normalize=normalize,
-                sclar_soh_path='./outputs/scaler_soh.pkl',
-                sclar_cls_path='./outputs/scaler_cls.pkl',
-                filter=filter,
-                print_log=False,
-                log_path=output_path+"/log.txt",
-        )
-
-    return {
-        'device': device,
-        'soh_detector': soh_detector,
-        'llm_model': llm_model,
-        'tokenizer': tokenizer,
-        'embedding_model': embedding_model,
-        'cross_encoder': cross_encoder,
-        'chromadb_collection': chromadb_collection
-    }
-
 class RealTimeSOHPredicter:
     def __init__(self, model_dict, num_detect_samples, feature_columns):
         self.device = model_dict["device"]
@@ -283,8 +239,173 @@ class RealTimeDataReader:
             return row
         else:
             return None
+        
+def generate_text(model, tokenizer, prompt: str, device="cpu", rag=False, embedding_model=None, cross_encoder=None, chromadb_collection=None):
+    '''调用本地大模型生成文本'''
+    start_time = time.time()
+    if rag:
+        top_k = 7
+        retrieved_chunks = retrieve(prompt, top_k, chromadb_collection, embedding_model)
+        print("引用的知识库片段:\n", retrieved_chunks)
+        reranked_chunks = rerank(prompt, retrieved_chunks, top_k, cross_encoder)
+        joined_chunks = "\n".join(reranked_chunks)
+        prompt = f"""日志摘要:{prompt}\n\n先验知识:{joined_chunks}"""   
+    system_prompt = "你是一个电子设备日志分析专家，请根据日志信息，给出最简单精炼日志摘要，并给出具体的建议执行操作"
+    #full_prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+    message = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt}
+    ]
+    full_prompt = tokenizer.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(full_prompt, return_tensors="pt").to(device)
+    outputs = model.generate(
+        inputs["input_ids"], 
+        attention_mask=inputs["attention_mask"],
+        max_new_tokens=512,
+        do_sample=True,
+        temperature=0.7,
+        top_p=0.85,
+        top_k=30,
+        eos_token_id=tokenizer.eos_token_id,
+    )
+    gen_ids = outputs[0][inputs["input_ids"].shape[1]:]  # 只拿生成的新token
+    generated_text = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+    end_time = time.time()
+    print("大模型运行时间:", end_time - start_time)
 
-if __name__ == "__main__":
+    return generated_text
+
+def model_initial(
+        llm_path,
+        embedding_model,
+        cross_encoder,
+        chromadb_path,
+        soh_path, 
+        cls_path,
+        normal_features=None,
+        threshold=0.05, 
+        num_modules=10,
+        normalize=True,
+        filter=True,
+        auto_threshold=False,
+        rag_enable=False,
+        seed=42,
+        enable_llm=False,
+        *args,
+        **kwargs
+):
+    """
+    加载模型，返回各模型对象
+    """
+    if seed is not None:
+        set_random_seed(seed)
+   
+    # Get device
+    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        device = torch.device("mps")
+        print("✅ Using MPS (Apple Silicon)")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+        print(f"✅ Using CUDA (GPU {torch.cuda.get_device_name(0)})")
+    else:
+        device = torch.device("cpu")
+        print("⚠️ Using CPU (no MPS or CUDA found)")
+    dtype = torch.float32  # 使用一致的数据类型
+
+    soh_detector = None
+    # 加载大模型
+    torch.cuda.empty_cache()
+    print(f"Loading LLM from {llm_path}...")
+    tokenizer = AutoTokenizer.from_pretrained(llm_path, trust_remote_code=True)
+    llm_model = AutoModelForCausalLM.from_pretrained(llm_path, trust_remote_code=True).to(device)
+        
+    # 加载RAG模型
+    if rag_enable:
+        print(f"Loading Embedding Model from {embedding_model}")
+        embedding_model = SentenceTransformer(embedding_model)
+        print(f"Loading Chromadb Collection from {chromadb_path}")
+        chromadb_client = chromadb.PersistentClient(chromadb_path)
+        chromadb_collection = chromadb_client.get_or_create_collection(name="default")
+        print(f"Loading Cross-Encoder from {cross_encoder}")
+        cross_encoder = CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1')
+    
+    # 加载SOH模型权重
+    print('Loading SOH Model...')
+    checkpoint = torch.load(soh_path, map_location=device)
+    soh_predictor = SOHPredictor(input_dim=normal_features.shape[1]).to(device)
+    soh_predictor.load_state_dict(checkpoint)
+
+    checkpoint = torch.load(cls_path, map_location=device)
+    cls_model = ClassificationModel(input_dim=normal_features.shape[1], num_modules=num_modules).to(device)
+    cls_model.load_state_dict(checkpoint)
+        
+    print(f"✅Loading Model Finished!")
+
+    soh_detector = SOHDetector(
+            soh_predictor, 
+            cls_model, 
+            normal_features, 
+            device, 
+            threshold=threshold, 
+            auto_threshold=auto_threshold, 
+            normalize=normalize,
+            sclar_soh_path='./outputs/scaler_soh.pkl',
+            sclar_cls_path='./outputs/scaler_cls.pkl',
+            filter=filter,
+            print_log=False,
+    )
+        
+    return {
+        'device': device,
+        'soh_detector': soh_detector,
+        'llm_model': llm_model,
+        'tokenizer': tokenizer,
+        'embedding_model': embedding_model,
+        'cross_encoder': cross_encoder,
+        'chromadb_collection': chromadb_collection
+    }
+
+def on_receive(transfer: RealTimeTransfer, info: Union[dict, str], results_history: dict, model_dict: dict, enable_llm: bool, device="cpu") -> dict:
+    text: str = None
+    # 接收健康度信息
+    if not enable_llm:
+        for key, value in zip(["soh", "threshold", "warning", "rul", "log"], info):
+            results_history[key].append(value)
+            # 超出长度
+            if len(results_history["soh"]) > 128:
+                for key in ["soh", "threshold", "warning", "rul", "log"]:
+                    results_history[key].pop(0)
+            # 调用绘图
+            print(f"健康度:{results_history['soh'][-1]}")
+            #realtime_soh_plot(results_history, 128)
+    else:
+        # 调用大模型处理
+        print(f"接收信息: {info}")
+        # 将大模型处理放入队列，立即返回（不阻塞）
+        model_queue.put((info, transfer, results_history))
+        text = receive_info["response"][-1]
+        
+    # 写json文件
+    receive_info = {
+        "soh": results_history["soh"][-1],
+        "threshold": results_history["threshold"][-1],
+        "warning": results_history["warning"][-1],
+        "rul": results_history["rul"][-1],
+        "log": results_history["log"][-1],
+        "response": text if text else ""
+    }
+    soh_buffer = [receive_info["soh"], receive_info["threshold"], receive_info["warning"], receive_info["rul"], receive_info["log"]]
+    #send_soh(transfer, soh_buffer)
+    send_soh_async(soh_buffer)
+    if receive_info["response"]:
+        #send_message(transfer, receive_info["response"])
+        send_message_async(receive_info["response"])
+    # with open('./outputs/results.json', 'a') as f:
+    #     json.dump(receive_info, f, ensure_ascii=False, indent=4)
+
+    return copy.deepcopy(info)
+
+def parse_args():
     import argparse
     parser = argparse.ArgumentParser()
 
@@ -308,11 +429,13 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)  #999
     parser.add_argument("--my_ip", type=str, default="192.168.2.1")
     parser.add_argument("--my_port", type=int, default=8888)
-    parser.add_argument("--peer_uri", type=str, default="ws://localhost:8765")
+    parser.add_argument("--peer_uri", type=str, default="ws://localhost:3016/ws/receive")
+    parser.add_argument("--enable_llm", type=bool, default=False)
 
     args = parser.parse_args()
-    #model_detect(**vars(args))
+    return args
 
+def main(args, **kwargs):
     # 加载数据
     print(f"Loading data from {args.data_path}...")
     data_list, nlen, nlen2 = data_process(args.data_path) # 前nlen个样本是bad data
@@ -337,48 +460,70 @@ if __name__ == "__main__":
     soh_predicter = RealTimeSOHPredicter(model_dict, args.num_detect_samples, None)
     data_reader = RealTimeDataReader(args.data_path, args.add_noise)
 
-    # 启动Websocket Server
+    # 启动Websocket
     transfer = RealTimeTransfer(
-        my_ip=args.my_ip,
-        my_port=args.my_port,
-        peer_uri=args.peer_uri
+        my_ip=None,
+        my_port=None,
+        peer_uri="ws://localhost:3016/ws/receive"
     )
+
     transfer.log_path = "./outputs/log_transfer.txt"
-    transfer.write_log("正在启动新的client(标识ID:LZH-DEBUG)", append=False)
+    transfer.write_log("✅ 正在启动新的client(标识ID:LZH-DEBUG)", append=False)
     transfer.run(mode="client")
+    print("Client started!!")
+
+    # 启动发送线程
+    sender = threading.Thread(target=sender_thread, args=(transfer, send_queue), daemon=True)
+    sender.start()
+
+    # 模型开始运行
     send_cnt = 128
+    results_history = {
+        "soh": [],
+        "threshold": [],
+        "warning": [],
+        "rul": [],
+        "log": [],
+        "response": [],
+    }
     
     # 清空日志内容
     soh_predicter.soh_detector.write_log("BEGIN", append=False)
     while transfer._running == False:
         time.sleep(1)
         print("等待连接...")
+
     # 循环读取数据
     print("连接成功, 模型开始运行...")
     while row_data := data_reader.read_next():
         row_feature = np.array(list(row_data.values()))
         result_dict = soh_predicter.add_sample(row_feature)
-        realtime_soh_plot(soh_predicter.results, soh_predicter.remembered_max_result)
+        #realtime_soh_plot(soh_predicter.results, soh_predicter.remembered_max_result)
 
         # 发送健康度和阈值给服务器保存
         if result_dict is not None:
-            soh_buffer = [float(result_dict["soh"]), 100*float(result_dict["threshold"]), result_dict["warning"], result_dict["rul"], result_dict["log"]]
-            send_soh(transfer, soh_buffer)
+            last_msg = on_receive(transfer=transfer,
+                                  info=result_dict,
+                                  results_history=results_history,
+                                  model_dict=model_dict,
+                                  enable_llm=False,
+                                  device=model_dict["device"]
+                                )
         # 发送压缩日志信息给服务器大模型推理
         if len(soh_predicter.soh_detector.log_info) % send_cnt == 0 and len(soh_predicter.soh_detector.log_info) > 0:
             # 将压缩日志发送给服务器端
             prompt = compress_logs_for_model(soh_predicter.soh_detector.log_info[-send_cnt:])
-            send_message(transfer, prompt)
+            last_msg = on_receive(transfer=transfer,
+                                  info=prompt,
+                                  results_history=results_history,
+                                  model_dict=model_dict,
+                                  enable_llm=True,
+                                  device=model_dict["device"]
+                                )
             
         time.sleep(0.2)
-    
-    
-    
 
 
-
-            
-
-        
-
-
+if __name__ == '__main__':
+    args = parse_args()
+    main(args)

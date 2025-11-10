@@ -34,19 +34,15 @@ def data_process(data_path):
     :return: 处理后的prompts
     """
     # Load Dataset
-    data_list = load_data(os.path.join(os.path.dirname(data_path), '无异常.txt'), add_noise=False)
+    data_list = load_data(os.path.join(os.path.dirname(data_path), '机械臂破坏前数据.txt'), add_noise=False, preprocess=False)
     dlen = len(data_list)
     # 加载异常数据
-    #bad_data = load_data(data_path, add_noise=False)  # 直接读取异常数据
-    process = AnomalyProcessor(data_list)
-    bad_data = process.noise_adder(data_list, noise_level=0.25, noise_rate=1.0)
-    nlen = 256
-    nlen2 = 0
-    for i in range(dlen):
-        if i >= nlen and i < 2 * nlen:
-            data_list[i] = bad_data[i - nlen]
-            nlen2 += 1
-    print(f'Successfully Adding {len(bad_data)} Data to Normal Data!') 
+    bad_data = load_data(data_path, add_noise=False, preprocess=False)  # 直接读取异常数据
+    #process = AnomalyProcessor(data_list)
+    #bad_data = process.noise_adder(data_list, noise_level=0.25, noise_rate=1.0)
+    nlen = len(data_list)
+    nlen2 = len(bad_data)
+    data_list.extend(bad_data)
     return data_list, nlen, nlen2
 
 def realtime_soh_plot(results: dict, max_len: int):
@@ -294,7 +290,7 @@ if __name__ == "__main__":
     parser.add_argument("--chromadb_path", type=str, default="./dataset/doc.db")
     parser.add_argument("--soh_path", type=str, default='./outputs/best_sohmodel.pth')
     parser.add_argument("--cls_path", type=str, default='./outputs/best_classification.pth')
-    parser.add_argument("--data_path", type=str, default='./dataset/无异常.txt')
+    parser.add_argument("--data_path", type=str, default='./dataset/机械臂破坏后数据.txt')
     parser.add_argument("--threshold", type=float, default=0.86)
     parser.add_argument("--num_normal_samples", type=int, default=32, help="多少个正常样本用于求解正常时的loss")
     parser.add_argument("--num_detect_samples", type=int, default=32, help="以多少个样本为一组进行预测，提高鲁棒性")

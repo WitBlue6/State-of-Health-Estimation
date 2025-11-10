@@ -18,9 +18,9 @@ import time
 import json
 import queue
 import threading
-import requests
+from datetime import datetime
 
-# 定义全局发送队列
+# 定义发送队列
 send_queue = queue.Queue()
 # 添加大模型处理队列
 model_queue = queue.Queue()
@@ -35,11 +35,14 @@ def model_worker(model_queue: queue.Queue, model_dict: dict, rag_enable: bool):
             print("大模型处理请求:", prompt)
             # 处理大模型请求（这会阻塞，但只在独立线程中）
             text = generate_text(
+                model=model_dict["llm_model"],
+                tokenizer=model_dict["tokenizer"],
                 prompt=prompt,
                 rag=rag_enable,
                 embedding_model=model_dict["embedding_model"],
                 chromadb_collection=model_dict["chromadb_collection"],
-                cross_encoder=model_dict["cross_encoder"]
+                cross_encoder=model_dict["cross_encoder"],
+                device=model_dict["device"]
             )
             results_history["response"].append(text)
             print(f"大模型输出:\n{text}")
@@ -100,75 +103,40 @@ def receiver_thread(receiver: RealTimeTransfer, msg_queue: queue.Queue):
             receiver.received = False
         time.sleep(0.01)
 
-# def generate_text(model, tokenizer, prompt: str, device="cpu", rag=False, embedding_model=None, cross_encoder=None, chromadb_collection=None):
-#     '''调用本地大模型生成文本'''
-#     start_time = time.time()
-#     if rag:
-#         top_k = 7
-#         retrieved_chunks = retrieve(prompt, top_k, chromadb_collection, embedding_model)
-#         print("引用的知识库片段:\n", retrieved_chunks)
-#         reranked_chunks = rerank(prompt, retrieved_chunks, top_k, cross_encoder)
-#         joined_chunks = "\n".join(reranked_chunks)
-#         prompt = f"""日志摘要:{prompt}\n\n先验知识:{joined_chunks}"""   
-#     system_prompt = "你是一个电子设备日志分析专家，请根据日志信息，给出最简单精炼日志摘要，并给出具体的建议执行操作"
-#     #full_prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-#     message = [
-#         {"role": "system", "content": system_prompt},
-#         {"role": "user", "content": prompt}
-#     ]
-#     full_prompt = tokenizer.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
-#     inputs = tokenizer(full_prompt, return_tensors="pt").to(device)
-#     outputs = model.generate(
-#         inputs["input_ids"], 
-#         attention_mask=inputs["attention_mask"],
-#         max_new_tokens=512,
-#         do_sample=True,
-#         temperature=0.7,
-#         top_p=0.85,
-#         top_k=30,
-#         #eos_token_id=tokenizer.eos_token_id,
-#         eos_token_id=int(tokenizer.eos_token_id),
-#     )
-#     gen_ids = outputs[0][inputs["input_ids"].shape[1]:]  # 只拿生成的新token
-#     generated_text = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
-#     end_time = time.time()
-#     print("大模型运行时间:", end_time - start_time)
-
-#     return generated_text
-def generate_text(prompt: str, rag=False, embedding_model=None, cross_encoder=None, chromadb_collection=None):
+def generate_text(model, tokenizer, prompt: str, device="cpu", rag=False, embedding_model=None, cross_encoder=None, chromadb_collection=None):
     '''调用本地大模型生成文本'''
-    url = "http://127.0.0.1:1040/generate"  # MindIE / vLLM 端口
-    headers = {"Content-Type": "application/json"}
-    system_prompt = "<|system|>\n你是一个电子设备日志分析专家，你需要根据日志信息，为用户生成摘要和建议，你需要完成两个具体要求，要求如下：\n第一，根据提供的日志信息，给出精炼的日志摘要\n第二，根据日志摘要，分析可能的病理原因，给出具体详细的建议执行操作\n"
+    start_time = time.time()
     if rag:
-        top_k = 5
+        top_k = 7
         retrieved_chunks = retrieve(prompt, top_k, chromadb_collection, embedding_model)
         print("引用的知识库片段:\n", retrieved_chunks)
         reranked_chunks = rerank(prompt, retrieved_chunks, top_k, cross_encoder)
-        joined_chunks = "\n".join(reranked_chunks) 
-        message = system_prompt + f"<|user|>\n日志摘要:{prompt}\n\n先验知识:{joined_chunks}<|user|>\n<|assistant|\n>"  
-    else:
-        message = system_prompt + f"<|user|>\n日志摘要:{prompt}\n<|assistant|\n>"
-    payload = {
-        "prompt": message,
-        "max_tokens": 512,
-        "stream": False,           # 不流式
-        "do_sample": True,
-        "temperature": 0.7,
-        "top_p": 0.85,
-        "top_k": 30,
-        "model": "qwen",
-        "stop": ["</|assistant|", "</|user|"]
-    }
-    response = requests.post(url, headers=headers, data=json.dumps(payload))
-    response.raise_for_status()
-    data = json.dumps(response.json(), indent=2, ensure_ascii=False) # <str>
-    data = json.loads(data)["text"][0]  # dict: {str: list} -> str
-    # 1. 清理掉反斜杠转义符
-    text = data.replace("\\n", "\n").replace("\\", "")
-    # import re
-    # cleaned_text = re.sub(r"<\|.*?\|>", "", data)  # 清除所有 <|...|> 标记
-    generated_text = text.split("<|assistant|\n>")[-1]
+        joined_chunks = "\n".join(reranked_chunks)
+        prompt = f"""日志摘要:{prompt}\n\n先验知识:{joined_chunks}"""   
+    system_prompt = "你是一个电子设备日志分析专家，请根据日志信息，给出最简单精炼日志摘要，并给出具体的建议执行操作"
+    #full_prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+    message = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt}
+    ]
+    full_prompt = tokenizer.apply_chat_template(message, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(full_prompt, return_tensors="pt").to(device)
+    outputs = model.generate(
+        inputs["input_ids"], 
+        attention_mask=inputs["attention_mask"],
+        max_new_tokens=512,
+        do_sample=True,
+        temperature=0.7,
+        top_p=0.85,
+        top_k=30,
+        #eos_token_id=tokenizer.eos_token_id,
+        eos_token_id=int(tokenizer.eos_token_id),
+    )
+    gen_ids = outputs[0][inputs["input_ids"].shape[1]:]  # 只拿生成的新token
+    generated_text = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+    end_time = time.time()
+    print("大模型运行时间:", end_time - start_time)
+
     return generated_text
 
 def realtime_soh_plot(results: dict, max_len: int):
@@ -275,11 +243,8 @@ def model_initial(
         # 加载大模型
         torch.cuda.empty_cache()
         print(f"Loading LLM from {llm_path}...")
-        # 使用MindIE镜像推理，不需要再加载LLM
-        tokenizer = None
-        llm_model = None
-        # tokenizer = AutoTokenizer.from_pretrained(llm_path, trust_remote_code=True)
-        # llm_model = AutoModelForCausalLM.from_pretrained(llm_path, trust_remote_code=True).to(device)
+        tokenizer = AutoTokenizer.from_pretrained(llm_path, trust_remote_code=True)
+        llm_model = AutoModelForCausalLM.from_pretrained(llm_path, trust_remote_code=True).to(device)
         embedding_model = None
         chromadb_collection = None
         cross_encoder = None
@@ -347,7 +312,6 @@ def on_receive(transfer: RealTimeTransfer, info: dict, results_history: dict, mo
         # 调用绘图
         print(f"健康度:{results_history['soh'][-1]}")
         #realtime_soh_plot(results_history, 128)
-    
         # 写json文件
         receive_info = {
             "soh": results_history["soh"][-1],
@@ -376,7 +340,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--llm_path", type=str, default='Qwen/Qwen2.5-0.5B-Instruct')
+    parser.add_argument("--llm_path", type=str, default='Qwen/Qwen1.5-1.8B-Chat')
     parser.add_argument("--embedding_model", type=str, default="shibing624/text2vec-base-chinese")
     parser.add_argument("--cross_encoder", type=str, default="cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
     parser.add_argument("--chromadb_path", type=str, default="./dataset/doc.db")
@@ -396,7 +360,6 @@ if __name__ == '__main__':
     parser.add_argument("--seed", type=int, default=42)  #999
     parser.add_argument("--my_ip", type=str, default="0.0.0.0")
     parser.add_argument("--my_port", type=int, default=8765)
-    parser.add_argument("--peer_uri", type=str, default="ws://localhost:3016/ws/receive")
 
     args = parser.parse_args()
 
@@ -407,20 +370,20 @@ if __name__ == '__main__':
     receiver = RealTimeTransfer(
         my_ip=args.my_ip,
         my_port=args.my_port,
-        peer_uri=None,
+        peer_uri=None
     )
     transfer = RealTimeTransfer(
         my_ip=None,
         my_port=None,
-        peer_uri=args.peer_uri
+        peer_uri="ws://localhost:3016/ws/receive"
     )
     receiver.log_path = "./outputs/log_receiver.txt"
-    receiver.write_log("✅ 正在启动新的server(标识ID:LZH-DEBUG)", append=False)
+    receiver.write_log(f"{datetime.now}正在启动新的server(标识ID:LZH-DEBUG)", append=False)
     receiver.run(mode="server")
     print("Server started!!")
 
     transfer.log_path = "./outputs/log_transfer.txt"
-    transfer.write_log("✅ 正在启动新的client(标识ID:LZH-DEBUG)", append=False)
+    transfer.write_log(f"{datetime.now()}正在启动新的client(标识ID:LZH-DEBUG)", append=False)
     transfer.run(mode="client")
     
     results_history = {
@@ -435,8 +398,8 @@ if __name__ == '__main__':
     #receicer.on_receive_callback = lambda info: on_receive(info, results_history, model_dict)
     # 启动接收线程
     msg_queue = queue.Queue()
-    receiver_thread = threading.Thread(target=receiver_thread, args=(receiver, msg_queue), daemon=True)
-    receiver_thread.start()
+    receive_thread = threading.Thread(target=receiver_thread, args=(receiver, msg_queue), daemon=True)
+    receive_thread.start()
 
     # 启动发送线程
     sender = threading.Thread(target=sender_thread, args=(transfer, send_queue), daemon=True)
